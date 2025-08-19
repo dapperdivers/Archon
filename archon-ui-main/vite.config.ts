@@ -21,6 +21,9 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   const host = isDocker ? internalHost : externalHost;
   const port = process.env.ARCHON_SERVER_PORT || env.ARCHON_SERVER_PORT || '8181';
   
+  // For Vite allowed hosts - what hosts are allowed to access the dev server?
+  const viteAllowedHosts = process.env.VITE_ALLOWED_HOSTS || env.VITE_ALLOWED_HOSTS;
+  
   return {
     plugins: [
       react(),
@@ -280,6 +283,7 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
       host: '0.0.0.0', // Listen on all network interfaces with explicit IP
       port: 5173, // Match the port expected in Docker
       strictPort: true, // Exit if port is in use
+      allowedHosts: viteAllowedHosts?.split(',').map((h: string) => h.trim()) || ['localhost'], // What hosts can access dev server
       proxy: {
         '/api': {
           target: `http://${host}:${port}`,
