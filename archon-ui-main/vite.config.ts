@@ -12,14 +12,16 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   // Load environment variables
   const env = loadEnv(mode, process.cwd(), '');
   
-  // Get host and port from environment variables or use defaults
-  // For internal Docker communication, use the service name
-  // For external access, use the HOST from environment
+  // Configuration for Vite dev server and API proxy
   const isDocker = process.env.DOCKER_ENV === 'true' || existsSync('/.dockerenv');
-  const internalHost = 'archon-server';  // Docker service name for internal communication
-  const externalHost = process.env.HOST || 'localhost';  // Host for external access
-  const host = isDocker ? internalHost : externalHost;
-  const port = process.env.ARCHON_SERVER_PORT || env.ARCHON_SERVER_PORT || '8181';
+  
+  // For API proxy target - where should frontend proxy API calls?
+  const apiHost = isDocker ? 'archon-server' : 'localhost';  // Docker service name vs localhost
+  const apiPort = process.env.ARCHON_SERVER_PORT || env.ARCHON_SERVER_PORT || '8181';
+  
+  // For Vite dev server - what host/port should Vite dev server bind to?
+  const viteHost = process.env.ARCHON_UI_HOST || env.ARCHON_UI_HOST || '0.0.0.0';
+  const vitePort = parseInt(process.env.ARCHON_UI_PORT || env.ARCHON_UI_PORT || '3737');
   
   return {
     plugins: [
@@ -277,39 +279,38 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
       }
     ],
     server: {
-      host: '0.0.0.0', // Listen on all network interfaces with explicit IP
-      port: parseInt(process.env.ARCHON_UI_PORT || env.ARCHON_UI_PORT || '3737'), // Use configurable port
+      host: viteHost, // What interface should Vite bind to?
+      port: vitePort, // What port should Vite use?
       strictPort: true, // Exit if port is in use
       allowedHosts: [env.HOST, 'localhost', '127.0.0.1'],
       proxy: {
         '/api': {
-          target: `http://${host}:${port}`,
+          target: `http://${apiHost}:${apiPort}`,  // Proxy API calls to backend
           changeOrigin: true,
           secure: false,
           ws: true,
           configure: (proxy, options) => {
             proxy.on('error', (err, req, res) => {
               console.log('🚨 [VITE PROXY ERROR]:', err.message);
-              console.log('🚨 [VITE PROXY ERROR] Target:', `http://${host}:${port}`);
+              console.log('🚨 [VITE PROXY ERROR] Target:', `http://${apiHost}:${apiPort}`);
               console.log('🚨 [VITE PROXY ERROR] Request:', req.url);
             });
             proxy.on('proxyReq', (proxyReq, req, res) => {
-              console.log('🔄 [VITE PROXY] Forwarding:', req.method, req.url, 'to', `http://${host}:${port}${req.url}`);
+              console.log('🔄 [VITE PROXY] Forwarding:', req.method, req.url, 'to', `http://${apiHost}:${apiPort}${req.url}`);
             });
           }
         },
         // Socket.IO specific proxy configuration
         '/socket.io': {
-          target: `http://${host}:${port}`,
+          target: `http://${apiHost}:${apiPort}`,  // Proxy WebSocket to backend
           changeOrigin: true,
           ws: true
         }
       },
     },
     define: {
-      'import.meta.env.VITE_HOST': JSON.stringify(host),
-      'import.meta.env.VITE_PORT': JSON.stringify(port),
-      'import.meta.env.PROD': env.PROD === 'true',
+      'import.meta.env.VITE_API_HOST': JSON.stringify(apiHost),
+      'import.meta.env.ARCHON_SERVER_PORT': JSON.stringify(apiPort),
     },
     resolve: {
       alias: {
@@ -330,8 +331,8 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
         '**/*.test.{ts,tsx}',
       ],
       env: {
-        VITE_HOST: host,
-        VITE_PORT: port,
+        VITE_API_HOST: apiHost,
+        ARCHON_SERVER_PORT: apiPort,
       },
       coverage: {
         provider: 'v8',

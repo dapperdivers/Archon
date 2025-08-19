@@ -1,32 +1,42 @@
 # Agents Service - Lightweight PydanticAI agents ONLY (no ML models)
 FROM python:3.11-slim
 
+# Set proper environment defaults
+ENV ARCHON_AGENTS_HOST=0.0.0.0
+ENV ARCHON_AGENTS_PORT=8052
+ENV LOG_LEVEL=INFO
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app:/app/src
+
 WORKDIR /app
 
-# Install dependencies
+# Install system dependencies and clean up in single layer
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy and install requirements from local source
 COPY requirements.agents.txt .
 RUN pip install --no-cache-dir -r requirements.agents.txt
 
-# Copy ONLY agents code - no dependencies on server code
-# Agents use MCP tools for all operations
-COPY src/agents/ src/agents/
-COPY src/__init__.py src/
+# Copy application code
+COPY . .
 
-# Set environment variables
-ENV PYTHONPATH="/app:$PYTHONPATH"
-ENV PYTHONUNBUFFERED=1
+# Create non-root user for security (works standalone + Kubernetes can override)
+RUN addgroup --gid 1001 archon && \
+    adduser --disabled-password --gecos '' --uid 1001 --gid 1001 archon && \
+    chown -R archon:archon /app
 
-# NO ML models in agents container!
-# Agents use MCP tools for all ML operations
+USER 1001
 
-# Expose Agents port
-ARG ARCHON_AGENTS_PORT=8052
-ENV ARCHON_AGENTS_PORT=${ARCHON_AGENTS_PORT}
 EXPOSE ${ARCHON_AGENTS_PORT}
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${ARCHON_AGENTS_PORT}/health')\""
+# Health check using Python
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ[\"ARCHON_AGENTS_PORT\"]}/health').read()" || exit 1
 
-# Run the Agents service
+# Run the agents service (matching original Archon structure)
 CMD sh -c "python -m uvicorn src.agents.server:app --host 0.0.0.0 --port ${ARCHON_AGENTS_PORT}"

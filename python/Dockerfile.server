@@ -19,6 +19,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Set proper environment defaults
+ENV ARCHON_SERVER_HOST=0.0.0.0
+ENV ARCHON_SERVER_PORT=8181
+ENV LOG_LEVEL=INFO
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # Install runtime dependencies for Playwright (minimal set)
 RUN apt-get update && apt-get install -y \
     wget \
@@ -48,27 +55,39 @@ RUN apt-get update && apt-get install -y \
 # Copy Python packages from builder
 COPY --from=builder /root/.local /root/.local
 
-# Install Playwright browsers
+# Install Playwright browsers in shared location accessible to non-root user
 ENV PATH=/root/.local/bin:$PATH
-RUN playwright install chromium
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN mkdir -p /opt/playwright-browsers && \
+    playwright install chromium && \
+    chmod -R 755 /opt/playwright-browsers
 
-# Copy server code and tests
+# Copy server code and tests (selective copying like upstream)
 COPY src/server/ src/server/
 COPY src/__init__.py src/
 COPY tests/ tests/
 
-# Set environment variables
-ENV PYTHONPATH="/app:/root/.local/lib/python3.11/site-packages:$PYTHONPATH"
-ENV PYTHONUNBUFFERED=1
+# Create non-root user for runtime security
+RUN addgroup --gid 1001 archon && \
+    adduser --disabled-password --gecos '' --uid 1001 --gid 1001 archon && \
+    # Create home directory structure
+    mkdir -p /home/archon/.cache && \
+    chown -R archon:archon /app /home/archon && \
+    # Allow non-root user access to Python packages in /root/.local
+    chmod -R 755 /root/.local && \
+    chmod 755 /root
 
-# Expose Server port
-ARG ARCHON_SERVER_PORT=8181
-ENV ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT}
+# Switch to non-root user for runtime
+USER 1001
+ENV HOME=/home/archon
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+ENV PYTHONPATH="/app:/root/.local/lib/python3.11/site-packages:$PYTHONPATH"
+
 EXPOSE ${ARCHON_SERVER_PORT}
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD sh -c "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${ARCHON_SERVER_PORT}/health')\""
+# Health check using Python (faster than curl for our use case)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ[\"ARCHON_SERVER_PORT\"]}/health').read()" || exit 1
 
-# Run the Server service
-CMD sh -c "python -m uvicorn src.server.main:socket_app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1"
+# Run the server with configurable port (using JSON array format for better signal handling)
+CMD ["sh", "-c", "python -m uvicorn src.server.main:socket_app --host 0.0.0.0 --port ${ARCHON_SERVER_PORT} --workers 1"]

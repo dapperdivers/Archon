@@ -160,17 +160,24 @@ async def process_agent_response(session_id: str, message: str, context: dict):
     await sio.emit("typing", {"type": "typing", "is_typing": True}, room=room)
 
     try:
-        # Call agents service with SSE streaming
-        agents_port = os.getenv("ARCHON_AGENTS_PORT")
-        if not agents_port:
-            raise ValueError(
-                "ARCHON_AGENTS_PORT environment variable is required. "
-                "Please set it in your .env file or environment."
+        # Call agents service with SSE streaming using standardized env vars
+        agents_host = os.getenv("ARCHON_AGENTS_HOST")
+        agents_port = os.getenv("ARCHON_AGENTS_PORT", "8052")
+        
+        if not agents_host:
+            await sio.emit(
+                "error",
+                {"type": "error", "error": "ARCHON_AGENTS_HOST environment variable is required. Please configure it."},
+                room=room,
             )
+            return
+        
+        agents_url = f"http://{agents_host}:{agents_port}"
+        
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
             async with client.stream(
                 "POST",
-                f"http://archon-agents:{agents_port}/agents/{agent_type}/stream",
+                f"{agents_url}/agents/{agent_type}/stream",
                 json={"agent_type": agent_type, "prompt": message, "context": context},
             ) as response:
                 if response.status_code != 200:

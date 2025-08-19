@@ -274,21 +274,30 @@ def main():
     """Main entry point for running the server."""
     import uvicorn
 
-    # Require ARCHON_SERVER_PORT to be set
-    server_port = os.getenv("ARCHON_SERVER_PORT")
-    if not server_port:
+    # Get host and port from ARCHON environment variables
+    server_host = os.getenv("ARCHON_SERVER_HOST", "0.0.0.0")
+    server_port = os.getenv("ARCHON_SERVER_PORT", "8181")
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    
+    # Validate port
+    try:
+        port = int(server_port)
+    except ValueError:
         raise ValueError(
-            "ARCHON_SERVER_PORT environment variable is required. "
-            "Please set it in your .env file or environment. "
-            "Default value: 8181"
+            f"Invalid port value '{server_port}'. Port must be a number. "
+            "Please check ARCHON_SERVER_PORT or PORT environment variable."
         )
+    
+    # Log startup configuration
+    logger.info(f"Starting Archon server on {server_host}:{port}")
+    logger.info(f"Log level: {log_level}")
 
     uvicorn.run(
         "src.server.main:socket_app",
-        host="0.0.0.0",
-        port=int(server_port),
+        host=server_host,
+        port=port,
         reload=True,
-        log_level="info",
+        log_level=log_level,
     )
 
 

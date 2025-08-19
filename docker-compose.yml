@@ -27,8 +27,11 @@ services:
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ARCHON_SERVER_HOST=${ARCHON_SERVER_HOST:-0.0.0.0}
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
+      - ARCHON_MCP_HOST=${ARCHON_MCP_HOST:-archon-mcp}
       - ARCHON_MCP_PORT=${ARCHON_MCP_PORT:-8051}
+      - ARCHON_AGENTS_HOST=${ARCHON_AGENTS_HOST:-archon-agents}
       - ARCHON_AGENTS_PORT=${ARCHON_AGENTS_PORT:-8052}
     networks:
       - app-network
@@ -81,12 +84,16 @@ services:
       - SERVICE_DISCOVERY_MODE=docker_compose
       - TRANSPORT=sse
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # MCP needs to know where to find other services
-      - API_SERVICE_URL=http://archon-server:${ARCHON_SERVER_PORT:-8181}
-      - AGENTS_SERVICE_URL=http://archon-agents:${ARCHON_AGENTS_PORT:-8052}
+      - ARCHON_MCP_HOST=${ARCHON_MCP_HOST:-0.0.0.0}
       - ARCHON_MCP_PORT=${ARCHON_MCP_PORT:-8051}
+      # MCP needs to know where to find other services
+      - ARCHON_SERVER_HOST=${ARCHON_SERVER_HOST:-archon-server}
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
+      - ARCHON_AGENTS_HOST=${ARCHON_AGENTS_HOST:-archon-agents}
       - ARCHON_AGENTS_PORT=${ARCHON_AGENTS_PORT:-8052}
+      # Legacy service URLs for backward compatibility
+      - API_SERVICE_URL=http://${ARCHON_SERVER_HOST:-archon-server}:${ARCHON_SERVER_PORT:-8181}
+      - AGENTS_SERVICE_URL=http://${ARCHON_AGENTS_HOST:-archon-agents}:${ARCHON_AGENTS_PORT:-8052}
     networks:
       - app-network
     depends_on:
@@ -125,7 +132,12 @@ services:
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ARCHON_AGENTS_HOST=${ARCHON_AGENTS_HOST:-0.0.0.0}
       - ARCHON_AGENTS_PORT=${ARCHON_AGENTS_PORT:-8052}
+      - ARCHON_SERVER_HOST=${ARCHON_SERVER_HOST:-archon-server}
+      - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
+      - ARCHON_MCP_HOST=${ARCHON_MCP_HOST:-archon-mcp}
+      - ARCHON_MCP_PORT=${ARCHON_MCP_PORT:-8051}
     networks:
       - app-network
     healthcheck:
@@ -146,20 +158,26 @@ services:
     build: ./archon-ui-main
     container_name: archon-ui
     ports:
-      - "${ARCHON_UI_PORT:-3737}:3737"
+      - "${ARCHON_UI_PORT:-3737}:${ARCHON_UI_PORT:-3737}"
     environment:
-      - VITE_API_URL=http://${HOST:-localhost}:${ARCHON_SERVER_PORT:-8181}
-      - VITE_ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
+      # ARCHON_UI_HOST: Set this to the hostname/IP where users will access the frontend
+      # - For local development: localhost (default)
+      # - For external access: your server's IP or domain name  
+      # - For production: your domain name
+      - VITE_API_URL=http://${ARCHON_UI_HOST:-localhost}:${ARCHON_SERVER_PORT:-8181}
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
-      - HOST=${HOST:-localhost}
-      - PROD=${PROD:-false}
+      - ARCHON_UI_HOST=${ARCHON_UI_HOST:-0.0.0.0}
+      - ARCHON_UI_PORT=${ARCHON_UI_PORT:-3737}
+      - DOCKER_ENV=true
+      - NODE_ENV=development
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3737"]
+      test: ["CMD", "curl", "-f", "http://localhost:${ARCHON_UI_PORT:-3737}/health.html"]
       interval: 30s
-      timeout: 10s
+      timeout: 3s
       retries: 3
+      start_period: 10s
     volumes:
       - ./archon-ui-main/src:/app/src
       - ./archon-ui-main/public:/app/public

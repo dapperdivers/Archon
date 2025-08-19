@@ -70,14 +70,19 @@ async def fetch_credentials_from_server():
         try:
             async with httpx.AsyncClient() as client:
                 # Call the server's internal credentials endpoint
-                server_port = os.getenv("ARCHON_SERVER_PORT")
-                if not server_port:
+                # Use ARCHON environment variables
+                server_host = os.getenv("ARCHON_SERVER_HOST")
+                server_port = os.getenv("ARCHON_SERVER_PORT", "8181")
+                
+                if not server_host:
                     raise ValueError(
-                        "ARCHON_SERVER_PORT environment variable is required. "
-                        "Please set it in your .env file or environment."
+                        "ARCHON_SERVER_HOST environment variable is required. "
+                        "Please set it to the server host (e.g., 'archon-server' for Docker Compose)."
                     )
+                
+                server_url = f"http://{server_host}:{server_port}"
                 response = await client.get(
-                    f"http://archon-server:{server_port}/internal/credentials/agents", timeout=10.0
+                    f"{server_url}/internal/credentials/agents", timeout=10.0
                 )
                 response.raise_for_status()
                 credentials = response.json()
@@ -174,10 +179,23 @@ async def run_agent(request: AgentRequest):
         agent = app.state.agents[request.agent_type]
 
         # Prepare dependencies for the agent
+        # Use service discovery or environment variables
+        mcp_host = os.getenv("ARCHON_MCP_HOST")
+        mcp_port = os.getenv("ARCHON_MCP_PORT", "8051")
+        
+        if not mcp_host:
+            raise HTTPException(
+                status_code=500, 
+                detail="ARCHON_MCP_HOST environment variable is required. "
+                       "Please set it to the MCP service host (e.g., 'archon-mcp' for Docker Compose)."
+            )
+        
+        mcp_endpoint = os.getenv("MCP_SERVICE_URL", f"http://{mcp_host}:{mcp_port}")
+        
         deps = {
             "context": request.context or {},
             "options": request.options or {},
-            "mcp_endpoint": os.getenv("MCP_SERVICE_URL", "http://archon-mcp:8051"),
+            "mcp_endpoint": mcp_endpoint,
         }
 
         # Run the agent
@@ -285,19 +303,28 @@ async def stream_agent(agent_type: str, request: AgentRequest):
 
 # Main entry point
 if __name__ == "__main__":
-    agents_port = os.getenv("ARCHON_AGENTS_PORT")
-    if not agents_port:
+    # Get host and port from ARCHON environment variables
+    agents_host = os.getenv("ARCHON_AGENTS_HOST", "0.0.0.0")
+    agents_port = os.getenv("ARCHON_AGENTS_PORT", "8052")
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    
+    # Validate port
+    try:
+        port = int(agents_port)
+    except ValueError:
         raise ValueError(
-            "ARCHON_AGENTS_PORT environment variable is required. "
-            "Please set it in your .env file or environment. "
-            "Default value: 8052"
+            f"Invalid port value '{agents_port}'. Port must be a number. "
+            "Please check ARCHON_AGENTS_PORT or PORT environment variable."
         )
-    port = int(agents_port)
+    
+    # Log startup configuration
+    logger.info(f"Starting Archon agents service on {agents_host}:{port}")
+    logger.info(f"Log level: {log_level}")
 
     uvicorn.run(
         "server:app",
-        host="0.0.0.0",
+        host=agents_host,
         port=port,
-        log_level="info",
+        log_level=log_level,
         reload=False,  # Disable reload in production
     )

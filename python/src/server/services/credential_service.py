@@ -499,8 +499,12 @@ async def initialize_credentials() -> None:
     # RAG settings will be looked up on-demand from the credential service
     infrastructure_credentials = [
         "OPENAI_API_KEY",  # Required for API client initialization
-        "HOST",  # Server binding configuration
-        "PORT",  # Server binding configuration
+        "ARCHON_SERVER_HOST",  # Server binding configuration
+        "ARCHON_SERVER_PORT",  # Server binding configuration
+        "ARCHON_MCP_HOST",  # MCP server binding configuration
+        "ARCHON_MCP_PORT",  # MCP server binding configuration
+        "ARCHON_AGENTS_HOST",  # Agents server binding configuration
+        "ARCHON_AGENTS_PORT",  # Agents server binding configuration
         "MCP_TRANSPORT",  # Server transport mode
         "LOGFIRE_ENABLED",  # Logging infrastructure setup
         "PROJECTS_ENABLED",  # Feature flag for module loading
