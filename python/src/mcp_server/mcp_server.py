@@ -67,17 +67,18 @@ _initialization_lock = threading.Lock()
 _initialization_complete = False
 _shared_context = None
 
-server_host = "0.0.0.0"  # Listen on all interfaces
+# Get host and port from ARCHON environment variables
+server_host = os.getenv("ARCHON_MCP_HOST", "0.0.0.0")
+mcp_port = os.getenv("ARCHON_MCP_PORT", "8051")
 
-# Require ARCHON_MCP_PORT to be set
-mcp_port = os.getenv("ARCHON_MCP_PORT")
-if not mcp_port:
+# Validate port
+try:
+    server_port = int(mcp_port)
+except ValueError:
     raise ValueError(
-        "ARCHON_MCP_PORT environment variable is required. "
-        "Please set it in your .env file or environment. "
-        "Default value: 8051"
+        f"Invalid port value '{mcp_port}'. Port must be a number. "
+        "Please check ARCHON_MCP_PORT or PORT environment variable."
     )
-server_port = int(mcp_port)
 
 
 @dataclass

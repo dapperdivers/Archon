@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ..services.credential_service import credential_service
+from ..config.service_discovery import get_mcp_url
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal", tags=["internal"])
 
 # Simple IP-based access control for internal endpoints
+# Note: Docker service names are resolved dynamically, not hardcoded
 ALLOWED_INTERNAL_IPS = [
     "127.0.0.1",  # Localhost
     "172.18.0.0/16",  # Docker network range
-    "archon-agents",  # Docker service name
-    "archon-mcp",  # Docker service name
+    # Service names are resolved dynamically via environment variables
 ]
 
 
@@ -97,8 +98,8 @@ async def get_agent_credentials(request: Request) -> dict[str, Any]:
             "AGENT_MAX_RETRIES": await credential_service.get_credential(
                 "AGENT_MAX_RETRIES", default="3"
             ),
-            # MCP endpoint
-            "MCP_SERVICE_URL": f"http://archon-mcp:{os.getenv('ARCHON_MCP_PORT')}",
+            # MCP endpoint using service discovery
+            "MCP_SERVICE_URL": get_mcp_url(),
             # Additional settings
             "LOG_LEVEL": await credential_service.get_credential("LOG_LEVEL", default="INFO"),
         }

@@ -28,35 +28,23 @@ class ServiceDiscovery:
     """
 
     def __init__(self):
-        # Get ports during initialization
-        server_port = os.getenv("ARCHON_SERVER_PORT")
-        mcp_port = os.getenv("ARCHON_MCP_PORT")
-        agents_port = os.getenv("ARCHON_AGENTS_PORT")
+        # Get ports from ARCHON environment variables
+        server_port = os.getenv("ARCHON_SERVER_PORT", "8181")
+        mcp_port = os.getenv("ARCHON_MCP_PORT", "8051")
+        agents_port = os.getenv("ARCHON_AGENTS_PORT", "8052")
 
-        if not server_port:
+        # Validate ports are numeric
+        try:
+            self.DEFAULT_PORTS = {
+                "api": int(server_port),
+                "mcp": int(mcp_port),
+                "agents": int(agents_port),
+            }
+        except ValueError as e:
             raise ValueError(
-                "ARCHON_SERVER_PORT environment variable is required. "
-                "Please set it in your .env file or environment. "
-                "Default value: 8181"
+                f"Invalid port configuration: {e}. "
+                "Please check ARCHON_SERVER_PORT, ARCHON_MCP_PORT, and ARCHON_AGENTS_PORT environment variables."
             )
-        if not mcp_port:
-            raise ValueError(
-                "ARCHON_MCP_PORT environment variable is required. "
-                "Please set it in your .env file or environment. "
-                "Default value: 8051"
-            )
-        if not agents_port:
-            raise ValueError(
-                "ARCHON_AGENTS_PORT environment variable is required. "
-                "Please set it in your .env file or environment. "
-                "Default value: 8052"
-            )
-
-        self.DEFAULT_PORTS = {
-            "api": int(server_port),
-            "mcp": int(mcp_port),
-            "agents": int(agents_port),
-        }
 
         self.environment = self._detect_environment()
         self._cache: dict[str, str] = {}
@@ -106,8 +94,9 @@ class ServiceDiscovery:
 
         if self.environment == Environment.DOCKER_COMPOSE:
             # Docker Compose uses service names directly
-            # Check for override via environment variable
-            host = os.getenv(f"{service_name.upper().replace('-', '_')}_HOST", service_name)
+            # Check for ARCHON host override
+            env_var_name = f"{service_name.upper().replace('-', '_')}_HOST"
+            host = os.getenv(env_var_name, service_name)
             url = f"{protocol}://{host}:{port}"
 
         else:

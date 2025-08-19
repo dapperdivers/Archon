@@ -37,9 +37,17 @@ class MCPClient:
                 # Fallback for when running in agents container
                 import os
 
+                mcp_host = os.getenv("ARCHON_MCP_HOST")
                 mcp_port = os.getenv("ARCHON_MCP_PORT", "8051")
-                if os.getenv("DOCKER_CONTAINER"):
-                    self.mcp_url = f"http://archon-mcp:{mcp_port}"
+                
+                if not mcp_host:
+                    raise ValueError(
+                        "ARCHON_MCP_HOST environment variable is required when running without service discovery. "
+                        "Please set it to the MCP service host (e.g., 'archon-mcp' for Docker Compose)."
+                    )
+                
+                if os.getenv("DOCKER_CONTAINER") or os.path.exists("/.dockerenv"):
+                    self.mcp_url = f"http://{mcp_host}:{mcp_port}"
                 else:
                     self.mcp_url = f"http://localhost:{mcp_port}"
 

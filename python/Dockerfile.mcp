@@ -3,6 +3,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies and clean up in single layer
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
 # Install dependencies
 COPY requirements.mcp.txt .
 RUN pip install --no-cache-dir -r requirements.mcp.txt
@@ -24,14 +31,26 @@ COPY src/server/config/__init__.py src/server/config/
 COPY src/server/config/service_discovery.py src/server/config/
 COPY src/server/config/logfire_config.py src/server/config/
 
-# Set environment variables
-ENV PYTHONPATH="/app:$PYTHONPATH"
+# Create non-root user for security
+RUN addgroup --gid 1001 archon && \
+    adduser --disabled-password --gecos '' --uid 1001 --gid 1001 archon && \
+    chown -R archon:archon /app
+
+USER 1001
+
+# Set environment variables  
+ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV ARCHON_MCP_HOST=0.0.0.0
+ENV ARCHON_MCP_PORT=8051
+ENV LOG_LEVEL=INFO
 
 # Expose MCP port
-ARG ARCHON_MCP_PORT=8051
-ENV ARCHON_MCP_PORT=${ARCHON_MCP_PORT}
 EXPOSE ${ARCHON_MCP_PORT}
+
+# Note: MCP service may not have a /health endpoint by default
+# Health check disabled - use TCP checks in Kubernetes instead
 
 # Run the MCP server
 CMD ["python", "-m", "src.mcp_server.mcp_server"]
