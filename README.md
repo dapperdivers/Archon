@@ -269,7 +269,7 @@ This is useful when:
 After changing hostname or ports:
 
 1. Restart Docker containers: `docker-compose down && docker-compose up -d`
-2. Access the UI at: `http://${HOST}:${ARCHON_UI_PORT}`
+2. Access the UI at: `http://${ARCHON_UI_HOST}:${ARCHON_UI_PORT}`
 3. Update your AI client configuration with the new hostname and MCP port
 
 ## 🔧 Development
