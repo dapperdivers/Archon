@@ -1,0 +1,204 @@
+name: Build and Push Archon Images
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  attestations: write
+  id-token: write
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      archon_ref:
+        description: 'Archon repository ref (tag, branch, or commit)'
+        required: true
+        default: 'main'
+        type: string
+  workflow_call:
+    inputs:
+      archon_ref:
+        description: 'Archon repository ref (tag, branch, or commit)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component:
+          - name: server
+            dockerfile: python/Dockerfile.server
+            context: python
+          - name: mcp
+            dockerfile: python/Dockerfile.mcp
+            context: python
+          - name: agents
+            dockerfile: python/Dockerfile.agents
+            context: python
+          - name: frontend
+            dockerfile: archon-ui-main/Dockerfile
+            context: archon-ui-main
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.archon_ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ inputs.archon_ref }}
+            type=raw,value={{date 'YYYY-MM-DD'}}
+            type=sha,prefix={{date 'YYYY-MM-DD'}}-
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component.context }}
+          file: ./${{ matrix.component.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=build-${{ matrix.component.name }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.component.name }}
+          platforms: linux/amd64  # AMD64 only for faster builds
+          provenance: true
+          sbom: true
+          annotations: |
+            index:org.opencontainers.image.title=Archon ${{ matrix.component.name }}
+            index:org.opencontainers.image.description=Archon ${{ matrix.component.name }} service - AI-powered development environment
+            index:org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.version=${{ inputs.archon_ref }}
+            index:org.opencontainers.image.created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            index:org.opencontainers.image.revision=${{ inputs.archon_ref }}
+            index:org.opencontainers.image.licenses=MIT
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        if: github.event_name != 'pull_request'
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        if: github.event_name != 'pull_request'
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}:latest
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.component.name }}.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'  # Don't fail build on vulnerabilities, just report them
+          ignore-unfixed: true
+
+      # Container security benchmark - Only on server and only on releases/tags for speed
+      - name: Run container security benchmark
+        uses: aquasecurity/trivy-action@master
+        if: github.event_name != 'pull_request' && matrix.component.name == 'server' && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}:latest
+          format: 'table'
+          scan-type: 'config'
+          output: 'trivy-config-${{ matrix.component.name }}.txt'
+
+      # Enhanced SBOM - Only on releases/tags for speed  
+      - name: Run Syft for enhanced SBOM
+        uses: anchore/sbom-action@v0.17.2
+        if: github.event_name != 'pull_request' && (matrix.component.name == 'server' || matrix.component.name == 'frontend') && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}:latest
+          format: 'spdx-json'
+          output-file: 'sbom-${{ matrix.component.name }}.spdx.json'
+
+      - name: Upload enhanced SBOM
+        uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && (matrix.component.name == 'server' || matrix.component.name == 'frontend') && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          name: sbom-${{ matrix.component.name }}
+          path: 'sbom-${{ matrix.component.name }}.spdx.json'
+          if-no-files-found: warn
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: github.event_name != 'pull_request'
+        continue-on-error: true  # Don't fail build if SARIF upload has issues
+        with:
+          sarif_file: 'trivy-results-${{ matrix.component.name }}.sarif'
+          category: 'trivy-${{ matrix.component.name }}'
+
+      - name: Sign container image with cosign
+        if: github.event_name != 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "$TAGS" | while IFS= read -r tag; do
+            echo "Signing $tag@$DIGEST"
+            cosign sign --yes "$tag@$DIGEST"
+          done
+
+  build-summary:
+    needs: [build-images]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate build summary
+        run: |
+          echo "## 🐳 Archon Docker Images Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Ref:** \`${{ inputs.archon_ref }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Status:** ${{ needs.build-images.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.build-images.result }}" == "success" ]; then
+            echo "### ✅ Successfully Built Images" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Component | Image |" >> $GITHUB_STEP_SUMMARY
+            echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Server | \`ghcr.io/${{ github.repository_owner }}/archon-dev-server:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| MCP | \`ghcr.io/${{ github.repository_owner }}/archon-dev-mcp:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Agents | \`ghcr.io/${{ github.repository_owner }}/archon-dev-agents:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Frontend | \`ghcr.io/${{ github.repository_owner }}/archon-dev-frontend:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔒 Security Features" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ SBOM (Software Bill of Materials) generated" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Build provenance attestation created" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Container images signed with cosign" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Vulnerability scanning with Trivy" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Multi-platform builds (amd64)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
