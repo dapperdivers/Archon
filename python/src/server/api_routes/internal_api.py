@@ -28,6 +28,14 @@ ALLOWED_INTERNAL_IPS = [
 ]
 
 
+def is_kubernetes_environment() -> bool:
+    """Detect if we're running in Kubernetes."""
+    return (
+        os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount") or
+        os.getenv("KUBERNETES_SERVICE_HOST") is not None
+    )
+
+
 def is_internal_request(request: Request) -> bool:
     """Check if request is from an internal source."""
     client_host = request.client.host if request.client else None
@@ -35,19 +43,46 @@ def is_internal_request(request: Request) -> bool:
     if not client_host:
         return False
 
-    # Check if it's a Docker network IP (172.16.0.0/12 range)
-    if client_host.startswith("172."):
-        parts = client_host.split(".")
-        if len(parts) == 4:
-            second_octet = int(parts[1])
-            # Docker uses 172.16.0.0 - 172.31.255.255
-            if 16 <= second_octet <= 31:
-                logger.info(f"Allowing Docker network request from {client_host}")
-                return True
+    # Check if internal auth is disabled (for development/testing)
+    if os.getenv("ARCHON_DISABLE_INTERNAL_AUTH", "false").lower() == "true":
+        logger.info(f"Internal auth disabled - allowing request from {client_host}")
+        return True
 
     # Check if it's localhost
     if client_host in ["127.0.0.1", "::1", "localhost"]:
         return True
+
+    # In Kubernetes, allow all cluster-internal traffic (private networks)
+    if is_kubernetes_environment():
+        # Allow all private network ranges in Kubernetes
+        if (client_host.startswith("10.") or 
+            client_host.startswith("192.168.") or
+            (client_host.startswith("172.") and len(client_host.split(".")) == 4)):
+            logger.info(f"Allowing Kubernetes cluster request from {client_host}")
+            return True
+    else:
+        # More restrictive for Docker/local environments
+        if client_host.startswith("10."):
+            # Kubernetes commonly uses 10.x.x.x
+            logger.info(f"Allowing private network request from {client_host}")
+            return True
+        
+        if client_host.startswith("172."):
+            parts = client_host.split(".")
+            if len(parts) == 4:
+                try:
+                    second_octet = int(parts[1])
+                    # Docker uses 172.16.0.0 - 172.31.255.255
+                    if 16 <= second_octet <= 31:
+                        logger.info(f"Allowing Docker network request from {client_host}")
+                        return True
+                except ValueError:
+                    pass
+
+        if client_host.startswith("192.168."):
+            # Local private network
+            logger.info(f"Allowing private network request from {client_host}")
+            return True
 
     return False
 
