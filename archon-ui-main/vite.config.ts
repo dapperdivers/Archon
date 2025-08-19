@@ -23,6 +23,9 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   const viteHost = process.env.ARCHON_UI_HOST || env.ARCHON_UI_HOST || '0.0.0.0';
   const vitePort = parseInt(process.env.ARCHON_UI_PORT || env.ARCHON_UI_PORT || '3737');
   
+  // For Vite allowed hosts - what hosts are allowed to access the dev server?
+  const viteAllowedHosts = process.env.VITE_ALLOWED_HOSTS || env.VITE_ALLOWED_HOSTS;
+  
   return {
     plugins: [
       react(),
@@ -282,7 +285,7 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
       host: viteHost, // What interface should Vite bind to?
       port: vitePort, // What port should Vite use?
       strictPort: true, // Exit if port is in use
-      allowedHosts: [env.HOST, 'localhost', '127.0.0.1'],
+      allowedHosts: viteAllowedHosts?.split(',').map((h: string) => h.trim()) || [env.HOST, 'localhost', '127.0.0.1'], // What hosts can access dev server
       proxy: {
         '/api': {
           target: `http://${apiHost}:${apiPort}`,  // Proxy API calls to backend
