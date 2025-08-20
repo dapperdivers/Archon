@@ -62,8 +62,9 @@ RUN mkdir -p /opt/playwright-browsers && \
     playwright install chromium && \
     chmod -R 755 /opt/playwright-browsers
 
-# Copy server code and tests (selective copying like upstream)
+# Copy server code, shared modules, and tests (selective copying like upstream)
 COPY src/server/ src/server/
+COPY src/shared/ src/shared/
 COPY src/__init__.py src/
 COPY tests/ tests/
 
