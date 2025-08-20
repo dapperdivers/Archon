@@ -204,8 +204,11 @@ spec:
           containerPort: {{ .Values.config.sidecar.port }}
           protocol: TCP
         env:
+        - name: MCP_SIDECAR_HOST
+          value: "0.0.0.0"
         - name: MCP_SIDECAR_PORT
           value: {{ .Values.config.sidecar.port | quote }}
+        {{- include "archon.commonEnv" . | nindent 8 }}
         envFrom:
         - configMapRef:
             name: {{ include "archon.fullname" . }}-config
