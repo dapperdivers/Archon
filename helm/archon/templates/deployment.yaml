@@ -56,7 +56,13 @@ spec:
           protocol: TCP
         env:
         - name: VITE_API_URL
+          {{- if and .Values.ingress.enabled .Values.config.frontend.useIngressForApi }}
+          value: ""
+          {{- else if .Values.config.frontend.apiUrl }}
+          value: {{ .Values.config.frontend.apiUrl | quote }}
+          {{- else }}
           value: "http://localhost:{{ .Values.service.server.port }}"
+          {{- end }}
         - name: NODE_ENV
           value: "production"
         - name: DOCKER_ENV
