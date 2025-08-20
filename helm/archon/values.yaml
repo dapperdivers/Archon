@@ -52,6 +52,12 @@ ingress:
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Socket.IO WebSocket support
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600" 
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET,PUT,POST,DELETE,PATCH,OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
     # cert-manager.io/cluster-issuer: letsencrypt-prod
     # nginx.ingress.kubernetes.io/rate-limit: "100"
   hosts:
@@ -62,6 +68,10 @@ ingress:
           service: archon  # Will use the unified service
           port: ui         # Named port from unified service
         - path: /api
+          pathType: Prefix
+          service: archon  # Will use the unified service
+          port: server     # Named port from unified service
+        - path: /socket.io
           pathType: Prefix
           service: archon  # Will use the unified service
           port: server     # Named port from unified service
@@ -137,6 +147,10 @@ config:
     # Set to false for Kubernetes (containers in same pod use localhost)
     # Set to true for Docker Compose (containers use service names)
     dockerEnv: false
+    # Use ingress host for API calls when ingress is enabled
+    useIngressForApi: false
+    # Override API URL (optional)
+    apiUrl: ""
   
   # Sidecar configuration
   sidecar:

@@ -51,6 +51,19 @@ data:
   {{- end }}
   {{- end }}
   
-  # Legacy service URLs for backward compatibility (using localhost)
+  # Service URLs for frontend API calls
+  {{- if and .Values.ingress.enabled .Values.config.frontend.useIngressForApi }}
+    {{- $ingressHost := (index .Values.ingress.hosts 0).host }}
+    {{- $protocol := "https" }}
+    {{- if not .Values.ingress.tls }}
+      {{- $protocol = "http" }}
+    {{- end }}
+  API_SERVICE_URL: "{{ $protocol }}://{{ $ingressHost }}"
+  AGENTS_SERVICE_URL: "{{ $protocol }}://{{ $ingressHost }}"
+  {{- else if .Values.config.frontend.apiUrl }}
+  API_SERVICE_URL: {{ .Values.config.frontend.apiUrl | quote }}
+  AGENTS_SERVICE_URL: {{ .Values.config.frontend.apiUrl | quote }}
+  {{- else }}
   API_SERVICE_URL: "http://localhost:{{ .Values.service.server.port }}"
   AGENTS_SERVICE_URL: "http://localhost:{{ .Values.service.agents.port }}"
+  {{- end }}
