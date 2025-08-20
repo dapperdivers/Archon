@@ -13,20 +13,20 @@ global:
 image:
   server:
     repository: dapperdivers/archon-dev-server
-    tag: "latest"
-    pullPolicy: IfNotPresent
+    tag: "main"
+    pullPolicy: Always
   mcp:
     repository: dapperdivers/archon-dev-mcp
-    tag: "latest"
-    pullPolicy: IfNotPresent
+    tag: "main"
+    pullPolicy: Always
   agents:
     repository: dapperdivers/archon-dev-agents
-    tag: "latest"
-    pullPolicy: IfNotPresent
+    tag: "main"
+    pullPolicy: Always
   ui:
     repository: dapperdivers/archon-dev-frontend
-    tag: "latest"
-    pullPolicy: IfNotPresent
+    tag: "main"
+    pullPolicy: Always
 
 # Service configuration (unified service with multiple ports)
 service:
