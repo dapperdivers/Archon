@@ -1,4 +1,5 @@
 {{- if .Values.rbac.create -}}
+# Namespace-scoped Role for basic operations
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -8,33 +9,47 @@ metadata:
     {{- include "archon.labels" . | nindent 4 }}
 rules:
 - apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "create", "delete", "watch"]
+  resources: ["pods", "pods/exec", "pods/attach", "pods/portforward", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
 - apiGroups: [""]
-  resources: ["pods/log"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: [""]
-  resources: ["pods/status"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: [""]
-  resources: ["pods/exec"]
-  verbs: ["create", "get"]
-- apiGroups: [""]
-  resources: ["pods/attach"]
-  verbs: ["create", "get"]
-- apiGroups: [""]
-  resources: ["pods/portforward"]
-  verbs: ["create", "get"]
+  resources: ["services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
 - apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: [""]
-  resources: ["services"]
-  verbs: ["get", "list", "create", "delete"]
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "list", "create", "update", "patch"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
 ---
+# Cluster-scoped ClusterRole for sidecar operations (cross-namespace access)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "archon.serviceAccountName" . }}-clusterrole
+  labels:
+    {{- include "archon.labels" . | nindent 4 }}
+rules:
+# Sidecar needs to manage pods and deployments across namespaces
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "pods/attach", "pods/portforward", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+# Sidecar needs to access namespaces (this was causing the 403 error)
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+# Additional resources for MCP pod management
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+# Metrics access for monitoring
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+---
+# Namespace-scoped RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -50,4 +65,20 @@ roleRef:
   kind: Role
   name: {{ include "archon.serviceAccountName" . }}-role
   apiGroup: rbac.authorization.k8s.io
+---
+# Cluster-scoped ClusterRoleBinding for sidecar operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "archon.serviceAccountName" . }}-clusterrolebinding
+  labels:
+    {{- include "archon.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "archon.serviceAccountName" . }}-clusterrole
+subjects:
+- kind: ServiceAccount
+  name: {{ include "archon.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
 {{- end }}

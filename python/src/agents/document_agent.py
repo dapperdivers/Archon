@@ -23,6 +23,17 @@ from .mcp_client import get_mcp_client
 logger = logging.getLogger(__name__)
 
 
+def get_supabase_client():
+    """Get Supabase client from server services."""
+    try:
+        from ..server.services.client_manager import get_supabase_client as _get_supabase_client
+        return _get_supabase_client()
+    except ImportError:
+        # Fallback if running in agents service without server imports
+        logger.warning("Could not import Supabase client - using MCP tools instead")
+        return None
+
+
 @dataclass
 class DocumentDependencies(ArchonDependencies):
     """Dependencies for document operations."""
@@ -76,7 +87,6 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
         agent = Agent(
             model=self.model,
             deps_type=DocumentDependencies,
-            result_type=DocumentOperation,
             system_prompt="""You are a Document Management Assistant that helps users create, update, and modify project documents through conversation.
 
 **Your Capabilities:**
@@ -837,8 +847,44 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
 
         try:
             result = await self.run(user_message, deps)
-            self.logger.info(f"Document operation completed: {result.operation_type}")
-            return result
+            self.logger.info(f"Document operation completed")
+            
+            # Since we removed result_type, the agent returns a string
+            # We need to parse this into a DocumentOperation
+            if isinstance(result, str):
+                # Try to determine operation type from the result message
+                operation_type = "query"  # Default
+                success = True
+                document_id = None
+                document_type = None
+                title = None
+                changes_made = []
+                
+                # Simple heuristics to determine operation type
+                result_lower = result.lower()
+                if "created" in result_lower:
+                    operation_type = "create"
+                elif "updated" in result_lower:
+                    operation_type = "update"
+                elif "deleted" in result_lower:
+                    operation_type = "delete"
+                elif "failed" in result_lower or "error" in result_lower:
+                    success = False
+                    operation_type = "error"
+                
+                return DocumentOperation(
+                    operation_type=operation_type,
+                    document_id=document_id,
+                    document_type=document_type,
+                    title=title,
+                    success=success,
+                    message=result,
+                    changes_made=changes_made,
+                    content_preview=result[:200] if len(result) > 200 else result,
+                )
+            else:
+                # If it's already a DocumentOperation, return as-is
+                return result
         except Exception as e:
             self.logger.error(f"Document operation failed: {str(e)}")
             # Return error result

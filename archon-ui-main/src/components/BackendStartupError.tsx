@@ -15,11 +15,11 @@ export const BackendStartupError: React.FC = () => {
             <AlertCircle className="w-8 h-8 text-red-500 flex-shrink-0 mt-1" />
             <div className="space-y-4 flex-1">
               <h2 className="text-2xl font-bold text-red-100">
-                Backend Service Startup Failure
+                Backend Service Connection Issue
               </h2>
               
               <p className="text-red-200">
-                The Archon backend service failed to start. This is typically due to a configuration issue.
+                The Archon backend service is not responding after multiple attempts (~2 minutes). This could be due to a startup delay, configuration issue, or service unavailability.
               </p>
 
               <div className="bg-black/50 rounded-lg p-4 border border-red-900/50">

@@ -128,6 +128,12 @@ config:
   # MCP configuration
   transport: sse
   
+  # Frontend configuration
+  frontend:
+    # Set to false for Kubernetes (containers in same pod use localhost)
+    # Set to true for Docker Compose (containers use service names)
+    dockerEnv: false
+  
   # Sidecar configuration
   sidecar:
     enabled: true
