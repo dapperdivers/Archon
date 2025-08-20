@@ -617,7 +617,6 @@ class DockerManager:
 
     async def add_websocket(self, websocket: WebSocket):
         """Add a WebSocket connection for log streaming."""
-        await websocket.accept()
         self.log_websockets.append(websocket)
 
         # Send connection info but NOT historical logs
@@ -766,7 +765,6 @@ class MCPServerManager:
     async def add_websocket(self, websocket: WebSocket):
         """Add a WebSocket connection for log streaming."""
         await self._ensure_initialized()
-        await websocket.accept()
         self.log_websockets.append(websocket)
 
         if self.manager is None:
@@ -1232,7 +1230,6 @@ async def get_external_server_info(server_id: str, _: None = Depends(ensure_mcp_
 @router.websocket("/servers/external/{server_id}/stream")
 async def websocket_external_server_stream(websocket: WebSocket, server_id: str):
     """WebSocket endpoint for streaming from a specific external MCP server."""
-    await websocket.accept()
 
     try:
         # Ensure manager is initialized (WebSockets can't use Depends())

@@ -352,7 +352,6 @@ class WebSocketSafeProcessor:
 
     async def connect(self, websocket: WebSocket):
         """Connect WebSocket client"""
-        await websocket.accept()
         self.active_connections.append(websocket)
         logfire_logger.info(
             "WebSocket client connected", total_connections=len(self.active_connections)
