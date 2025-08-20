@@ -64,18 +64,18 @@ spec:
             name: {{ include "archon.fullname" . }}-config
         livenessProbe:
           httpGet:
-            path: /health.html
+            path: /
             port: ui-http
-          initialDelaySeconds: 10
+          initialDelaySeconds: 30
           periodSeconds: {{ .Values.healthChecks.livenessProbe.periodSeconds }}
           timeoutSeconds: {{ .Values.healthChecks.livenessProbe.timeoutSeconds }}
           successThreshold: {{ .Values.healthChecks.livenessProbe.successThreshold }}
           failureThreshold: {{ .Values.healthChecks.livenessProbe.failureThreshold }}
         readinessProbe:
           httpGet:
-            path: /health.html
+            path: /
             port: ui-http
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: {{ .Values.healthChecks.readinessProbe.timeoutSeconds }}
           successThreshold: {{ .Values.healthChecks.readinessProbe.successThreshold }}
@@ -140,12 +140,20 @@ spec:
           httpGet:
             path: /health
             port: mcp-http
-          {{- toYaml .Values.healthChecks.livenessProbe | nindent 10 }}
+          initialDelaySeconds: {{ .Values.healthChecks.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.healthChecks.livenessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthChecks.livenessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.livenessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.livenessProbe.failureThreshold }}
         readinessProbe:
           httpGet:
             path: /health
             port: mcp-http
-          {{- toYaml .Values.healthChecks.readinessProbe | nindent 10 }}
+          initialDelaySeconds: {{ .Values.healthChecks.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.healthChecks.readinessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthChecks.readinessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.readinessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.readinessProbe.failureThreshold }}
         resources:
           {{- toYaml .Values.resources.mcp | nindent 10 }}
       

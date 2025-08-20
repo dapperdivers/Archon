@@ -279,6 +279,53 @@ try:
     )
     logger.info("✓ FastMCP server instance created successfully")
 
+    # Add health check endpoint for Kubernetes probes
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_endpoint(request):
+        """Health check endpoint for Kubernetes liveness/readiness probes."""
+        from starlette.responses import JSONResponse
+        from datetime import datetime
+        
+        try:
+            # Check if context is available and healthy
+            context = getattr(request.state, 'context', None)
+            
+            if context and hasattr(context, 'health_status') and context.health_status:
+                status = context.health_status.get("status", "unknown")
+                response_data = {
+                    "status": status,
+                    "service": "archon-mcp-server", 
+                    "timestamp": datetime.now().isoformat(),
+                    "health": context.health_status
+                }
+                
+                # Return 200 for healthy/degraded, 503 for unhealthy
+                status_code = 200 if status in ["healthy", "degraded"] else 503
+                return JSONResponse(content=response_data, status_code=status_code)
+            else:
+                # Service starting up or no context yet
+                return JSONResponse(
+                    content={
+                        "status": "starting",
+                        "service": "archon-mcp-server",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=200  # Allow startup phase
+                )
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            return JSONResponse(
+                content={
+                    "status": "error",
+                    "service": "archon-mcp-server", 
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=503
+            )
+
+    logger.info("✓ Health check endpoint registered at /health")
+
 except Exception as e:
     logger.error(f"✗ Failed to create FastMCP server: {e}")
     logger.error(traceback.format_exc())
