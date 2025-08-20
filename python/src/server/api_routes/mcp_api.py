@@ -705,16 +705,12 @@ class MCPServerManager:
                 # Check if we're already in an event loop
                 try:
                     loop = asyncio.get_running_loop()
-                    # We're in an event loop, create a task
-                    import asyncio
-                    task = asyncio.create_task(self._ensure_initialized())
-                    # This is a non-blocking approach - if not initialized, return partial status
-                    if not self._initialized:
-                        return {
-                            "status": "initializing",
-                            "message": "Manager initializing",
-                            "deployment_mode": self._manager_type
-                        }
+                    # We're in an event loop, return partial status for now
+                    return {
+                        "status": "initializing", 
+                        "message": "Manager initializing",
+                        "deployment_mode": self._manager_type
+                    }
                 except RuntimeError:
                     # No event loop running, safe to use asyncio.run
                     asyncio.run(self._ensure_initialized())
