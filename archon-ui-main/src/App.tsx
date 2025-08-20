@@ -21,7 +21,7 @@ const AppRoutes = () => {
       <Route path="/" element={<KnowledgeBasePage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
       <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/mcp" element={<MCPPage />} />
+      <Route path="/mcp-dashboard" element={<MCPPage />} />
       {projectsEnabled ? (
         <Route path="/projects" element={<ProjectPage />} />
       ) : (
