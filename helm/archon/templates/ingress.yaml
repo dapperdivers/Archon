@@ -53,11 +53,11 @@ spec:
                   {{- if .port }}
                   name: {{ .port }}
                   {{- else }}
-                  number: {{ if eq .service "ui" }}{{ $.Values.service.ui.port }}{{ else }}{{ $.Values.service.server.port }}{{ end }}
+                  number: {{ if eq .service "ui" }}{{ $.Values.service.ui.port }}{{ else if eq .service "mcp" }}{{ $.Values.service.mcp.port }}{{ else }}{{ $.Values.service.server.port }}{{ end }}
                   {{- end }}
               {{- else }}
               serviceName: {{ $fullName }}
-              servicePort: {{ if eq .service "ui" }}{{ $.Values.service.ui.port }}{{ else }}{{ $.Values.service.server.port }}{{ end }}
+              servicePort: {{ if eq .service "ui" }}{{ $.Values.service.ui.port }}{{ else if eq .service "mcp" }}{{ $.Values.service.mcp.port }}{{ else }}{{ $.Values.service.server.port }}{{ end }}
               {{- end }}
           {{- end }}
     {{- end }}

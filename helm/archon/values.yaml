@@ -75,6 +75,10 @@ ingress:
           pathType: Prefix
           service: archon  # Will use the unified service
           port: server     # Named port from unified service
+        - path: /mcp
+          pathType: Prefix
+          service: archon  # Will use the unified service
+          port: mcp        # Named port from unified service
   tls: []
   #  - secretName: archon-tls
   #    hosts:
