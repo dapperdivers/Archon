@@ -24,8 +24,11 @@ from pydantic import BaseModel
 
 # Import unified logging
 from ..config.logfire_config import api_logger, mcp_logger, safe_set_attribute, safe_span
-from ..mcp_kubernetes import MCPKubernetesManager, get_mcp_registry, get_package_manager
-from ..mcp_kubernetes.client import MCPSidecarClient
+# Import shared registry and package management components
+from ...shared.registry import get_mcp_registry
+from ...shared.packages import get_package_manager
+from ..services.mcp_sidecar_client import MCPSidecarClient
+from ..services.kubernetes_mcp_manager import KubernetesMCPManager
 from ..utils import get_supabase_client
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -679,10 +682,10 @@ class MCPServerManager:
                 # Check deployment mode before trying Docker
                 deployment_mode = os.getenv("DEPLOYMENT_MODE", "").lower()
                 if deployment_mode == "kubernetes":
-                    # In Kubernetes without sidecar, we can't manage containers
-                    mcp_logger.warning("In Kubernetes mode but sidecar not available")
-                    self.manager = None
-                    self._manager_type = "unavailable"
+                    # In Kubernetes without sidecar, use Kubernetes-native MCP management
+                    mcp_logger.info("Using Kubernetes-native MCP management (main MCP server)")
+                    self.manager = KubernetesMCPManager()
+                    self._manager_type = "kubernetes"
                 else:
                     # Fall back to Docker for non-Kubernetes environments
                     self.manager = DockerManager()
@@ -1550,204 +1553,3 @@ async def mcp_health():
         return result
 
 
-# ============================================================================
-# NEW MODULAR MCP KUBERNETES ENDPOINTS
-# ============================================================================
-
-# Initialize global manager (only for Kubernetes environments)
-mcp_k8s_manager = None
-if os.getenv("DEPLOYMENT_MODE") == "kubernetes":
-    mcp_k8s_manager = MCPKubernetesManager()
-
-
-@router.post("/servers/external/start")
-async def start_external_server(server_config: dict):
-    """Start an external MCP server (npx, uv, python, docker)."""
-    if not mcp_k8s_manager:
-        raise HTTPException(status_code=501, detail="External servers only supported in Kubernetes mode")
-    
-    try:
-        result = await mcp_k8s_manager.start_external_server(server_config)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/servers/external/stop/{server_id}")
-async def stop_external_server(server_id: str):
-    """Stop a specific external MCP server."""
-    if not mcp_k8s_manager:
-        raise HTTPException(status_code=501, detail="External servers only supported in Kubernetes mode")
-    
-    try:
-        result = await mcp_k8s_manager.stop_external_server(server_id)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/servers/external")
-async def list_external_servers():
-    """List all running external MCP servers."""
-    if not mcp_k8s_manager:
-        raise HTTPException(status_code=501, detail="External servers only supported in Kubernetes mode")
-    
-    try:
-        result = await mcp_k8s_manager.list_external_servers()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.websocket("/servers/external/{server_id}/stream")
-async def stream_external_server_logs(websocket: WebSocket, server_id: str):
-    """Stream logs from a specific external MCP server."""
-    if not mcp_k8s_manager:
-        await websocket.close(code=1003, reason="External servers only supported in Kubernetes mode")
-        return
-    
-    await websocket.accept()
-    
-    try:
-        # This would integrate with the stdio bridge for real log streaming
-        # For now, send a placeholder
-        await websocket.send_json({
-            "type": "info",
-            "message": f"Streaming logs for server {server_id}",
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        
-        # Keep connection alive
-        while True:
-            await asyncio.sleep(5)
-            await websocket.send_json({
-                "type": "heartbeat",
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        })
-
-
-@router.get("/registry/templates")
-async def get_server_templates(category: str = None, server_type: str = None):
-    """Get available MCP server templates."""
-    try:
-        registry = get_mcp_registry()
-        templates = registry.list_templates(category=category, server_type=server_type)
-        
-        return {
-            "templates": [
-                {
-                    "server_id": t.server_id,
-                    "name": t.name,
-                    "description": t.description,
-                    "server_type": t.server_type,
-                    "package": t.package,
-                    "transport": t.transport,
-                    "tags": t.tags,
-                    "capabilities": [
-                        {
-                            "name": cap.name,
-                            "description": cap.description,
-                            "category": cap.category
-                        }
-                        for cap in t.capabilities
-                    ]
-                }
-                for t in templates
-            ],
-            "count": len(templates)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/registry/search")
-async def search_server_templates(q: str):
-    """Search MCP server templates."""
-    try:
-        registry = get_mcp_registry()
-        templates = registry.search_templates(q)
-        
-        return {
-            "templates": [
-                {
-                    "server_id": t.server_id,
-                    "name": t.name,
-                    "description": t.description,
-                    "server_type": t.server_type,
-                    "package": t.package,
-                    "tags": t.tags
-                }
-                for t in templates
-            ],
-            "query": q,
-            "count": len(templates)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/packages/search")
-async def search_packages(q: str, package_manager: str = "npm", limit: int = 20):
-    """Search for MCP packages."""
-    try:
-        pkg_manager = get_package_manager()
-        result = await pkg_manager.search_packages(q, package_manager, limit)
-        
-        return {
-            "packages": [
-                {
-                    "name": pkg.name,
-                    "version": pkg.version,
-                    "description": pkg.description,
-                    "author": pkg.author,
-                    "keywords": pkg.keywords
-                }
-                for pkg in result.packages
-            ],
-            "total_count": result.total_count,
-            "search_time_ms": result.search_time_ms,
-            "source": result.source,
-            "query": q
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/packages/search/all")
-async def search_all_packages(q: str, limit: int = 20):
-    """Search for MCP packages across all package managers."""
-    try:
-        pkg_manager = get_package_manager()
-        results = await pkg_manager.search_all_packages(q, limit)
-        
-        return {
-            "results": {
-                manager: {
-                    "packages": [
-                        {
-                            "name": pkg.name,
-                            "version": pkg.version,
-                            "description": pkg.description,
-                            "author": pkg.author,
-                            "keywords": pkg.keywords
-                        }
-                        for pkg in result.packages
-                    ],
-                    "total_count": result.total_count,
-                    "search_time_ms": result.search_time_ms
-                }
-                for manager, result in results.items()
-            },
-            "query": q
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

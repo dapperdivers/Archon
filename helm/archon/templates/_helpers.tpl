@@ -124,6 +124,17 @@ Image name helpers
 {{- end }}
 {{- end }}
 
+{{- define "archon.sidecarImage" -}}
+{{- $registry := .Values.global.imageRegistry | default "" }}
+{{- $repository := .Values.image.sidecar.repository }}
+{{- $tag := .Values.image.sidecar.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
 {{/*
 Environment variables for all services
 */}}

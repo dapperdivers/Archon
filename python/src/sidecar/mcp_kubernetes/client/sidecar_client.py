@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from ...config.logfire_config import mcp_logger
+from ...config import mcp_logger
 
 
 class MCPSidecarClient:

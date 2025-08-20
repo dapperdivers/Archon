@@ -48,6 +48,9 @@ jobs:
           - name: agents
             dockerfile: python/Dockerfile.agents
             context: python
+          - name: sidecar
+            dockerfile: python/Dockerfile.sidecar
+            context: python
           - name: frontend
             dockerfile: archon-ui-main/Dockerfile
             context: archon-ui-main
@@ -197,6 +200,7 @@ jobs:
             echo "| Server | \`ghcr.io/${{ github.repository_owner }}/archon-dev-server:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| MCP | \`ghcr.io/${{ github.repository_owner }}/archon-dev-mcp:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Agents | \`ghcr.io/${{ github.repository_owner }}/archon-dev-agents:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Sidecar | \`ghcr.io/${{ github.repository_owner }}/archon-dev-sidecar:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Frontend | \`ghcr.io/${{ github.repository_owner }}/archon-dev-frontend:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🔒 Security Features" >> $GITHUB_STEP_SUMMARY

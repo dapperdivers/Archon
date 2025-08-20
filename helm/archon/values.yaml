@@ -27,6 +27,10 @@ image:
     repository: dapperdivers/archon-dev-frontend
     tag: "main"
     pullPolicy: Always
+  sidecar:
+    repository: dapperdivers/archon-dev-sidecar
+    tag: "main"
+    pullPolicy: Always
 
 # Service configuration (unified service with multiple ports)
 service:

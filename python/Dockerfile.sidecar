@@ -1,0 +1,67 @@
+# MCP Sidecar Service - Kubernetes-native MCP server management
+
+# Build stage
+FROM python:3.11 AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies (minimal sidecar-specific requirements)
+COPY requirements.sidecar.txt .
+RUN pip install --user --no-cache-dir -r requirements.sidecar.txt
+
+# Runtime stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Set proper environment defaults
+ENV MCP_SIDECAR_HOST=0.0.0.0
+ENV MCP_SIDECAR_PORT=8053
+ENV LOG_LEVEL=INFO
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install kubectl for Kubernetes operations
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x kubectl \
+    && mv kubectl /usr/local/bin/ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Copy Python packages from builder
+COPY --from=builder /root/.local /root/.local
+
+# Copy sidecar code and dependencies (new clean structure)
+COPY src/sidecar/ src/sidecar/
+COPY src/__init__.py src/
+
+# Create non-root user for runtime security
+RUN addgroup --gid 1001 archon && \
+    adduser --disabled-password --gecos '' --uid 1001 --gid 1001 archon && \
+    mkdir -p /home/archon/.cache && \
+    chown -R archon:archon /app /home/archon && \
+    chmod -R 755 /root/.local && \
+    chmod 755 /root
+
+# Switch to non-root user for runtime
+USER 1001
+ENV HOME=/home/archon
+ENV PYTHONPATH="/app:/root/.local/lib/python3.11/site-packages:$PYTHONPATH"
+ENV PATH=/root/.local/bin:$PATH
+
+EXPOSE ${MCP_SIDECAR_PORT}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ[\"MCP_SIDECAR_PORT\"]}/health').read()" || exit 1
+
+# Run the sidecar service (new structure)
+CMD ["python", "-m", "src.sidecar.main"]

@@ -8,7 +8,7 @@ import asyncio
 import os
 from typing import Any
 
-from ...config.logfire_config import mcp_logger
+from ...config import mcp_logger
 
 
 class KubernetesExecHandler:

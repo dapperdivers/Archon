@@ -9,7 +9,7 @@ and configuration templates.
 import json
 from typing import Any
 
-from ...config.logfire_config import mcp_logger
+from ...config import mcp_logger
 from .builtin_servers import create_builtin_servers
 from .models import MCPServerCapability, MCPServerTemplate
 

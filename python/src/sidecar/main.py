@@ -13,8 +13,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..mcp_kubernetes.sidecar.manager import MCPSidecarManager
-from ..mcp_kubernetes.sidecar.config import ServerConfig, MCPResponse
+from .mcp_kubernetes.sidecar.manager import MCPSidecarManager
+from .mcp_kubernetes.sidecar.config import ServerConfig, MCPResponse
 
 
 # Configure logging

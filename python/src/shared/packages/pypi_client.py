@@ -9,7 +9,8 @@ from typing import Any
 
 import httpx
 
-from ...config.logfire_config import mcp_logger
+import logging
+mcp_logger = logging.getLogger(__name__)
 from .models import PackageInfo
 
 

@@ -1,0 +1,17 @@
+# MCP Sidecar Service - Minimal Dependencies
+# Core web framework
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Kubernetes client
+kubernetes>=28.1.0
+
+# Async support
+httpx>=0.25.0
+aiofiles>=23.2.0
+
+# Logging and monitoring
+structlog>=23.2.0
