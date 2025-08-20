@@ -1078,18 +1078,31 @@ async def websocket_log_stream(websocket: WebSocket):
     await mcp_manager.add_websocket(websocket)
     try:
         while True:
-            # Keep connection alive
-            await asyncio.sleep(1)
-            # Check if WebSocket is still connected
-            await websocket.send_json({"type": "ping"})
+            # Keep connection alive with reasonable ping interval (30 seconds)
+            await asyncio.sleep(30)
+            
+            # Check if WebSocket is still connected before sending ping
+            try:
+                await websocket.send_json({"type": "ping", "timestamp": datetime.now(datetime.timezone.utc).isoformat()})
+                mcp_logger.debug("WebSocket ping sent successfully")
+            except Exception as ping_error:
+                mcp_logger.error(f"WebSocket ping failed: {str(ping_error)}")
+                # Break the loop to trigger cleanup on ping failure
+                break
+                
     except WebSocketDisconnect:
+        mcp_logger.info("WebSocket disconnected by client")
         mcp_manager.remove_websocket(websocket)
-    except Exception:
+    except Exception as e:
+        mcp_logger.error(f"WebSocket error: {str(e)}")
         mcp_manager.remove_websocket(websocket)
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as close_error:
+            mcp_logger.debug(f"Error closing WebSocket: {str(close_error)}")
+    finally:
+        # Ensure websocket is always removed from manager
+        mcp_manager.remove_websocket(websocket)
 
 
 # External Server Management Endpoints
@@ -1281,9 +1294,17 @@ async def websocket_external_server_stream(websocket: WebSocket, server_id: str)
         # Keep connection alive and handle any incoming messages
         while True:
             try:
-                await asyncio.sleep(1)
-                # Send periodic ping
-                await websocket.send_json({"type": "ping", "timestamp": datetime.now(datetime.timezone.utc).isoformat()})
+                # Use reasonable ping interval (30 seconds)
+                await asyncio.sleep(30)
+                
+                # Send periodic ping with error handling
+                try:
+                    await websocket.send_json({"type": "ping", "timestamp": datetime.now(datetime.timezone.utc).isoformat()})
+                    mcp_logger.debug(f"External server WebSocket ping sent for {server_id}")
+                except Exception as ping_error:
+                    mcp_logger.error(f"WebSocket ping failed for server {server_id}: {str(ping_error)}")
+                    # Break the loop to trigger cleanup on ping failure
+                    break
 
                 # In a real implementation, you would:
                 # 1. Connect to the server's stdio/sse stream

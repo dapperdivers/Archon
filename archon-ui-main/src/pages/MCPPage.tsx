@@ -79,25 +79,62 @@ export const MCPPage = () => {
   }, []);
 
 
-  // Start WebSocket connection when server is running
-  useEffect(() => {
-    if (serverStatus.status === 'running') {
-      // Fetch historical logs first (last 100 entries)
-      mcpServerService.getLogs({ limit: 100 }).then(historicalLogs => {
-        setLogs(historicalLogs);
-      }).catch(console.error);
+  // Connection state tracking to prevent unnecessary WebSocket connections
+  const [isWebSocketConnected, setIsWebSocketConnected] = useState(false);
+  const connectionStateRef = useRef({
+    isConnected: false,
+    lastConnectionAttempt: 0,
+    connectionDebounceMs: 2000 // 2 second debounce
+  });
 
-      // Then start streaming new logs via WebSocket
-      mcpServerService.streamLogs((log) => {
-        setLogs(prev => [...prev, log]);
-      }, { autoReconnect: true });
+  // Start WebSocket connection when server is running (with connection state management)
+  useEffect(() => {
+    const currentTime = Date.now();
+    const timeSinceLastAttempt = currentTime - connectionStateRef.current.lastConnectionAttempt;
+    
+    if (serverStatus.status === 'running') {
+      // Only connect if not already connected and enough time has passed
+      if (!connectionStateRef.current.isConnected && timeSinceLastAttempt >= connectionStateRef.current.connectionDebounceMs) {
+        console.log('Starting WebSocket connection for MCP logs...');
+        connectionStateRef.current.lastConnectionAttempt = currentTime;
+        connectionStateRef.current.isConnected = true;
+        setIsWebSocketConnected(true);
+        
+        // Fetch historical logs first (last 100 entries)
+        mcpServerService.getLogs({ limit: 100 }).then(historicalLogs => {
+          setLogs(historicalLogs);
+        }).catch(console.error);
+
+        // Then start streaming new logs via WebSocket
+        const ws = mcpServerService.streamLogs((log) => {
+          setLogs(prev => [...prev, log]);
+        }, { autoReconnect: true });
+        
+        // Handle WebSocket close events to update connection state
+        ws.onclose = (originalOnClose => (event) => {
+          console.log('WebSocket connection closed');
+          connectionStateRef.current.isConnected = false;
+          setIsWebSocketConnected(false);
+          if (originalOnClose) originalOnClose.call(ws, event);
+        })(ws.onclose);
+      } else if (connectionStateRef.current.isConnected) {
+        console.log('WebSocket already connected, skipping connection attempt');
+      } else {
+        console.log(`WebSocket connection debounced, ${connectionStateRef.current.connectionDebounceMs - timeSinceLastAttempt}ms remaining`);
+      }
       
       // Ensure configuration is loaded when server is running
       if (!config) {
         loadConfiguration();
       }
     } else {
-      mcpServerService.disconnectLogs();
+      // Server stopped - disconnect WebSocket and reset state
+      if (connectionStateRef.current.isConnected) {
+        console.log('Server stopped, disconnecting WebSocket...');
+        mcpServerService.disconnectLogs();
+        connectionStateRef.current.isConnected = false;
+        setIsWebSocketConnected(false);
+      }
     }
   }, [serverStatus.status]);
 
@@ -697,12 +734,22 @@ export const MCPPage = () => {
               
               <Card accentColor="purple" className="h-full flex flex-col">
                 <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm text-gray-600 dark:text-zinc-400">
-                    {logs.length > 0 
-                      ? `Showing ${logs.length} log entries`
-                      : 'No logs available'
-                    }
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm text-gray-600 dark:text-zinc-400">
+                      {logs.length > 0 
+                        ? `Showing ${logs.length} log entries`
+                        : 'No logs available'
+                      }
+                    </p>
+                    {serverStatus.status === 'running' && (
+                      <div className="flex items-center gap-1">
+                        <div className={`w-2 h-2 rounded-full ${isWebSocketConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                        <span className="text-xs text-gray-500 dark:text-zinc-500">
+                          {isWebSocketConnected ? 'Live' : 'Connecting...'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
