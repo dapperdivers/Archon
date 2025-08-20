@@ -60,7 +60,7 @@ archon-ui-main/
 
 ## 📄 Pages Documentation
 
-### 1. MCP Dashboard (`/mcp`)
+### 1. MCP Dashboard (`/mcp-dashboard`)
 
 The central control panel for the MCP server.
 
