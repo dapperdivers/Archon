@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 from fastapi import WebSocket
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 
 from ..config.logfire_config import mcp_logger
 
@@ -31,7 +33,30 @@ class KubernetesMCPManager:
         # Get pod info from environment
         self.pod_name = os.getenv("HOSTNAME", "unknown-pod")
         self.namespace = os.getenv("KUBERNETES_NAMESPACE", "default")
+        self.mcp_container_name = "archon-mcp"  # Default MCP container name
         
+        # Initialize Kubernetes client
+        self.k8s_client = None
+        self._initialize_k8s_client()
+        
+    def _initialize_k8s_client(self):
+        """Initialize Kubernetes client for log access."""
+        try:
+            # Try to load in-cluster config first (for pods running in K8s)
+            config.load_incluster_config()
+            mcp_logger.info("Loaded in-cluster Kubernetes configuration")
+        except Exception:
+            try:
+                # Fall back to local kubeconfig (for local development)
+                config.load_kube_config()
+                mcp_logger.info("Loaded local Kubernetes configuration")
+            except Exception as e:
+                mcp_logger.warning(f"Failed to initialize Kubernetes client: {e}")
+                return
+        
+        self.k8s_client = client.CoreV1Api()
+        mcp_logger.info("Kubernetes client initialized successfully")
+    
     def _get_mcp_url(self) -> str:
         """Get the MCP service URL based on environment."""
         host = os.getenv("ARCHON_MCP_HOST", "localhost")
@@ -237,12 +262,161 @@ class KubernetesMCPManager:
         for ws in disconnected:
             self.log_websockets.remove(ws)
     
-    def get_logs(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Get historical logs."""
-        logs = list(self.logs)
-        if limit > 0:
-            logs = logs[-limit:]
-        return logs
+    async def _fetch_mcp_container_logs(self, lines: int = 100, server_id: str | None = None) -> list[dict[str, Any]]:
+        """Fetch logs from the MCP container or a specific external server pod."""
+        if not self.k8s_client:
+            mcp_logger.warning("Kubernetes client not available for log fetching")
+            return []
+        
+        try:
+            if server_id is None:
+                # Get logs from the main MCP container in the same pod
+                log_response = self.k8s_client.read_namespaced_pod_log(
+                    name=self.pod_name,
+                    namespace=self.namespace,
+                    container=self.mcp_container_name,
+                    tail_lines=lines,
+                    timestamps=True
+                )
+            else:
+                # Get logs from external server pod
+                # External servers are typically deployed as separate pods with predictable names
+                external_pod_name = f"mcp-{server_id}"
+                try:
+                    log_response = self.k8s_client.read_namespaced_pod_log(
+                        name=external_pod_name,
+                        namespace=self.namespace,
+                        tail_lines=lines,
+                        timestamps=True
+                    )
+                except ApiException as e:
+                    if e.status == 404:
+                        # Try alternative naming convention
+                        external_pod_name = f"archon-mcp-{server_id}"
+                        log_response = self.k8s_client.read_namespaced_pod_log(
+                            name=external_pod_name,
+                            namespace=self.namespace,
+                            tail_lines=lines,
+                            timestamps=True
+                        )
+                    else:
+                        raise
+            
+            # Parse log lines into structured format
+            log_entries = []
+            for line in log_response.strip().split('\n'):
+                if not line:
+                    continue
+                    
+                # Parse Kubernetes log format: timestamp container_log_content
+                try:
+                    # Split on first space to separate timestamp from log content
+                    parts = line.split(' ', 1)
+                    if len(parts) >= 2:
+                        timestamp_str = parts[0]
+                        message = parts[1]
+                        
+                        # Determine log level from message content
+                        level = self._parse_log_level(message)
+                        
+                        log_entries.append({
+                            "timestamp": timestamp_str,
+                            "level": level,
+                            "message": message
+                        })
+                    else:
+                        # If we can't parse timestamp, use current time
+                        log_entries.append({
+                            "timestamp": datetime.utcnow().isoformat() + "Z",
+                            "level": "INFO",
+                            "message": line
+                        })
+                except Exception as e:
+                    mcp_logger.debug(f"Failed to parse log line '{line}': {e}")
+                    # Add the raw line as a fallback
+                    log_entries.append({
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "level": "INFO", 
+                        "message": line
+                    })
+            
+            return log_entries
+            
+        except ApiException as e:
+            if e.status == 404:
+                mcp_logger.info(f"MCP container '{self.mcp_container_name}' not found in pod '{self.pod_name}'")
+            else:
+                mcp_logger.error(f"Failed to fetch MCP container logs: {e}")
+            return []
+        except Exception as e:
+            mcp_logger.error(f"Error fetching MCP container logs: {e}")
+            return []
+    
+    def _parse_log_level(self, message: str) -> str:
+        """Parse log level from message content."""
+        message_lower = message.lower()
+        if any(word in message_lower for word in ["error", "exception", "failed", "critical"]):
+            return "ERROR"
+        elif any(word in message_lower for word in ["warning", "warn"]):
+            return "WARNING"
+        elif any(word in message_lower for word in ["debug"]):
+            return "DEBUG"
+        else:
+            return "INFO"
+    
+    def get_logs(self, limit: int = 100, server_id: str | None = None) -> list[dict[str, Any]]:
+        """Get historical logs from both internal buffer and MCP container or external server."""
+        # For external servers, skip internal logs since they're not relevant
+        if server_id is not None:
+            internal_logs = []
+        else:
+            # Get internal logs (status messages) for main MCP server
+            internal_logs = list(self.logs)
+        
+        # Try to get actual container logs synchronously
+        try:
+            # Use the existing event loop if available, otherwise create new one
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an event loop, use run_in_executor to avoid blocking
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_fetch_logs, limit, server_id)
+                    container_logs = future.result(timeout=10)
+            except RuntimeError:
+                # No event loop running, safe to use asyncio.run
+                container_logs = asyncio.run(self._fetch_mcp_container_logs(limit, server_id))
+            
+            # Combine internal logs with container logs
+            all_logs = internal_logs + container_logs
+            
+            # Sort by timestamp if possible
+            try:
+                all_logs.sort(key=lambda x: x.get("timestamp", ""))
+            except Exception:
+                # If sorting fails, just use the combined list as-is
+                pass
+                
+            # Apply limit
+            if limit > 0:
+                all_logs = all_logs[-limit:]
+                
+            return all_logs
+            
+        except Exception as e:
+            if server_id:
+                mcp_logger.warning(f"Failed to fetch logs for server {server_id}: {e}")
+                return []  # No fallback for external servers
+            else:
+                mcp_logger.warning(f"Failed to fetch container logs, returning internal logs only: {e}")
+                # Fall back to internal logs only for main server
+                if limit > 0:
+                    internal_logs = internal_logs[-limit:]
+                return internal_logs
+    
+    def _run_fetch_logs(self, limit: int, server_id: str | None = None) -> list[dict[str, Any]]:
+        """Helper method to run async log fetching in a new event loop."""
+        return asyncio.run(self._fetch_mcp_container_logs(limit, server_id))
     
     def clear_logs(self):
         """Clear the log buffer."""
@@ -259,6 +433,17 @@ class KubernetesMCPManager:
             "type": "connection",
             "message": f"WebSocket connected to Kubernetes MCP manager (pod: {self.pod_name})",
         })
+        
+        # Send recent logs from the container to initialize the stream
+        # Note: For now, WebSocket only supports main MCP server
+        # External server streaming would need separate WebSocket endpoints
+        if self.k8s_client:
+            try:
+                recent_logs = await self._fetch_mcp_container_logs(20)  # Get last 20 lines
+                for log in recent_logs:
+                    await websocket.send_json(log)
+            except Exception as e:
+                mcp_logger.debug(f"Failed to send initial logs to WebSocket: {e}")
     
     def remove_websocket(self, websocket: WebSocket):
         """Remove WebSocket connection."""
