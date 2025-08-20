@@ -54,7 +54,7 @@ RUN addgroup --gid 1001 archon && \
 # Switch to non-root user for runtime
 USER 1001
 ENV HOME=/home/archon
-ENV PYTHONPATH="/app:/root/.local/lib/python3.11/site-packages:$PYTHONPATH"
+ENV PYTHONPATH="/app:/root/.local/lib/python3.11/site-packages"
 ENV PATH=/root/.local/bin:$PATH
 
 EXPOSE ${MCP_SIDECAR_PORT}
