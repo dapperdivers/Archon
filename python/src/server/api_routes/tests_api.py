@@ -107,7 +107,6 @@ class TestWebSocketManager:
         self.connections: dict[str, list[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, execution_id: str):
-        await websocket.accept()
         if execution_id not in self.connections:
             self.connections[execution_id] = []
         self.connections[execution_id].append(websocket)

@@ -425,7 +425,6 @@ class KubernetesMCPManager:
     
     async def add_websocket(self, websocket: WebSocket):
         """Add WebSocket for log streaming."""
-        await websocket.accept()
         self.log_websockets.append(websocket)
         
         # Send connection info
