@@ -189,17 +189,17 @@ securityContext:
 # Health checks
 healthChecks:
   livenessProbe:
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 10
+    initialDelaySeconds: 60  # Allow more time for container startup
+    periodSeconds: 15        # Check every 15 seconds
+    timeoutSeconds: 5        # Fail faster - 5 second timeout
     successThreshold: 1
-    failureThreshold: 3
+    failureThreshold: 2      # Fail after 2 consecutive failures (30 seconds)
   readinessProbe:
-    initialDelaySeconds: 5
-    periodSeconds: 5
-    timeoutSeconds: 10
+    initialDelaySeconds: 15  # Allow startup time but faster than liveness
+    periodSeconds: 10        # Check every 10 seconds
+    timeoutSeconds: 3        # Quick timeout for readiness
     successThreshold: 1
-    failureThreshold: 3
+    failureThreshold: 2      # Fail after 2 consecutive failures (20 seconds)
 
 # Node selection
 nodeSelector: {}
