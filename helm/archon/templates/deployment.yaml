@@ -1,0 +1,223 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "archon.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "archon.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "archon.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "archon.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "archon.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      # UI Container
+      - name: archon-ui
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: {{ include "archon.uiImage" . }}
+        imagePullPolicy: {{ .Values.image.ui.pullPolicy }}
+        ports:
+        - name: ui-http
+          containerPort: {{ .Values.service.ui.port }}
+          protocol: TCP
+        env:
+        - name: VITE_API_URL
+          value: "http://localhost:{{ .Values.service.server.port }}"
+        - name: NODE_ENV
+          value: "production"
+        envFrom:
+        - configMapRef:
+            name: {{ include "archon.fullname" . }}-config
+        livenessProbe:
+          httpGet:
+            path: /health.html
+            port: ui-http
+          initialDelaySeconds: 10
+          periodSeconds: {{ .Values.healthChecks.livenessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthChecks.livenessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.livenessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.livenessProbe.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /health.html
+            port: ui-http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: {{ .Values.healthChecks.readinessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.readinessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.readinessProbe.failureThreshold }}
+        resources:
+          {{- toYaml .Values.resources.ui | nindent 10 }}
+      
+      # Server Container
+      - name: archon-server
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: {{ include "archon.serverImage" . }}
+        imagePullPolicy: {{ .Values.image.server.pullPolicy }}
+        ports:
+        - name: server-http
+          containerPort: {{ .Values.service.server.port }}
+          protocol: TCP
+        env:
+        - name: ARCHON_SERVER_HOST
+          value: "0.0.0.0"
+        {{- if .Values.config.sidecar.enabled }}
+        - name: MCP_SIDECAR_URL
+          value: "http://localhost:{{ .Values.config.sidecar.port }}"
+        {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "archon.fullname" . }}-config
+        - secretRef:
+            name: {{ include "archon.secretName" . }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: server-http
+          {{- toYaml .Values.healthChecks.livenessProbe | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: server-http
+          {{- toYaml .Values.healthChecks.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources.server | nindent 10 }}
+      
+      # MCP Container
+      - name: archon-mcp
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: {{ include "archon.mcpImage" . }}
+        imagePullPolicy: {{ .Values.image.mcp.pullPolicy }}
+        ports:
+        - name: mcp-http
+          containerPort: {{ .Values.service.mcp.port }}
+          protocol: TCP
+        env:
+        - name: ARCHON_MCP_HOST
+          value: "0.0.0.0"
+        envFrom:
+        - configMapRef:
+            name: {{ include "archon.fullname" . }}-config
+        - secretRef:
+            name: {{ include "archon.secretName" . }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: mcp-http
+          {{- toYaml .Values.healthChecks.livenessProbe | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: mcp-http
+          {{- toYaml .Values.healthChecks.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources.mcp | nindent 10 }}
+      
+      # Agents Container
+      - name: archon-agents
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: {{ include "archon.agentsImage" . }}
+        imagePullPolicy: {{ .Values.image.agents.pullPolicy }}
+        ports:
+        - name: agents-http
+          containerPort: {{ .Values.service.agents.port }}
+          protocol: TCP
+        env:
+        - name: ARCHON_AGENTS_HOST
+          value: "0.0.0.0"
+        envFrom:
+        - configMapRef:
+            name: {{ include "archon.fullname" . }}-config
+        - secretRef:
+            name: {{ include "archon.secretName" . }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: agents-http
+          {{- toYaml .Values.healthChecks.livenessProbe | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: agents-http
+          {{- toYaml .Values.healthChecks.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources.agents | nindent 10 }}
+      
+      {{- if .Values.config.sidecar.enabled }}
+      # MCP Sidecar Container (optional)
+      - name: mcp-sidecar
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: {{ include "archon.serverImage" . }}
+        imagePullPolicy: {{ .Values.image.server.pullPolicy }}
+        ports:
+        - name: sidecar-http
+          containerPort: {{ .Values.config.sidecar.port }}
+          protocol: TCP
+        env:
+        - name: MCP_SIDECAR_PORT
+          value: {{ .Values.config.sidecar.port | quote }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "archon.fullname" . }}-config
+        - secretRef:
+            name: {{ include "archon.secretName" . }}
+        command: ["python", "-m", "src.server.services.mcp_sidecar"]
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: sidecar-http
+          initialDelaySeconds: 15
+          periodSeconds: {{ .Values.healthChecks.livenessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthChecks.livenessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.livenessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.livenessProbe.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: sidecar-http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: {{ .Values.healthChecks.readinessProbe.timeoutSeconds }}
+          successThreshold: {{ .Values.healthChecks.readinessProbe.successThreshold }}
+          failureThreshold: {{ .Values.healthChecks.readinessProbe.failureThreshold }}
+        resources:
+          {{- toYaml .Values.resources.sidecar | nindent 10 }}
+      {{- end }}

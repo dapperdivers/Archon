@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "archon.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "archon.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  # UI Service Port
+  - port: {{ .Values.service.ui.port }}
+    targetPort: ui-http
+    protocol: TCP
+    name: ui
+  # Server Service Port  
+  - port: {{ .Values.service.server.port }}
+    targetPort: server-http
+    protocol: TCP
+    name: server
+  # MCP Service Port
+  - port: {{ .Values.service.mcp.port }}
+    targetPort: mcp-http
+    protocol: TCP
+    name: mcp
+  # Agents Service Port
+  - port: {{ .Values.service.agents.port }}
+    targetPort: agents-http
+    protocol: TCP
+    name: agents
+  {{- if .Values.config.sidecar.enabled }}
+  # Sidecar Service Port (internal only)
+  - port: {{ .Values.config.sidecar.port }}
+    targetPort: sidecar-http
+    protocol: TCP
+    name: sidecar
+  {{- end }}
+  selector:
+    {{- include "archon.selectorLabels" . | nindent 4 }}

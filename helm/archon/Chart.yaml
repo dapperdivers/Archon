@@ -1,0 +1,20 @@
+apiVersion: v2
+name: archon
+description: A Helm chart for Archon - MCP server for integrating web crawling and RAG into AI agents
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/dapperdivers/Archon
+sources:
+  - https://github.com/dapperdivers/Archon
+maintainers:
+  - name: DapperDivers
+    email: contact@dapperdivers.com
+keywords:
+  - mcp
+  - rag
+  - ai
+  - knowledge-management
+  - sidecar
+annotations:
+  category: AI/ML

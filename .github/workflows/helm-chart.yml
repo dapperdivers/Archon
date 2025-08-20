@@ -1,0 +1,346 @@
+name: Helm Chart CI/CD
+
+on:
+  pull_request:
+    paths:
+      - 'helm/archon/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'helm/archon/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish chart (bypasses path filter)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  HELM_VERSION: v3.14.0
+
+jobs:
+  test:
+    name: Test Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Lint Helm chart
+      run: |
+        helm lint helm/archon
+
+    - name: Test template rendering
+      run: |
+        # Test with default values
+        echo "Testing with default values..."
+        helm template test-release helm/archon --debug > /tmp/default-output.yaml
+        
+        # Test with custom values
+        echo "Testing with custom values..."
+        cat > test-values.yaml << EOF
+        secrets:
+          data:
+            supabaseUrl: "https://test.supabase.co"
+            supabaseServiceKey: "test-key"
+            openaiApiKey: "test-openai-key"
+        
+        ingress:
+          enabled: true
+          hosts:
+            - host: test.example.com
+              paths:
+                - path: /
+                  pathType: Prefix
+                  service: archon
+                  port: ui
+        
+        monitoring:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+        
+        config:
+          sidecar:
+            enabled: false
+        EOF
+        
+        helm template test-release helm/archon -f test-values.yaml > /tmp/custom-output.yaml
+
+    - name: Basic template validation
+      run: |
+        # Basic validation - check that YAML is well-formed
+        echo "Checking YAML syntax..."
+        python3 -c "
+        import yaml
+        import sys
+        
+        def validate_yaml(filename):
+            try:
+                with open(filename, 'r') as f:
+                    docs = list(yaml.safe_load_all(f))
+                print(f'✅ {filename}: {len(docs)} documents loaded successfully')
+                return True
+            except yaml.YAMLError as e:
+                print(f'❌ {filename}: YAML error - {e}')
+                return False
+            except Exception as e:
+                print(f'❌ {filename}: Error - {e}')
+                return False
+        
+        success = True
+        success &= validate_yaml('/tmp/default-output.yaml')
+        success &= validate_yaml('/tmp/custom-output.yaml')
+        
+        if not success:
+            sys.exit(1)
+        print('✅ All YAML files are valid!')
+        "
+        
+        # Check for basic Kubernetes resource structure
+        echo "Checking for required Kubernetes resources..."
+        grep -q "kind: Deployment" /tmp/default-output.yaml && echo "✅ Deployment found"
+        grep -q "kind: Service" /tmp/default-output.yaml && echo "✅ Service found"
+        grep -q "kind: ConfigMap" /tmp/default-output.yaml && echo "✅ ConfigMap found"
+        grep -q "kind: Secret" /tmp/default-output.yaml && echo "✅ Secret found"
+        
+        # Count resources
+        echo "Resource summary:"
+        echo "Deployments: $(grep -c "kind: Deployment" /tmp/default-output.yaml)"
+        echo "Services: $(grep -c "kind: Service" /tmp/default-output.yaml)"
+        echo "ConfigMaps: $(grep -c "kind: ConfigMap" /tmp/default-output.yaml)"
+        echo "Secrets: $(grep -c "kind: Secret" /tmp/default-output.yaml)"
+
+    - name: Package chart
+      run: |
+        mkdir -p dist
+        helm package helm/archon --destination dist
+        echo "Packaged charts:"
+        ls -la dist/
+
+    - name: Upload chart artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: helm-chart-${{ github.sha }}
+        path: dist/*.tgz
+        retention-days: 30
+
+  publish:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'release' || github.event.inputs.force_publish == 'true')
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      packages: write
+      pages: write
+      id-token: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config user.name "$GITHUB_ACTOR"
+        git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: ${{ env.HELM_VERSION }}
+
+    - name: Set chart version
+      run: |
+        if [[ "${{ github.event_name }}" == "release" ]]; then
+          # Use release tag for version
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION=${VERSION#v}  # Remove 'v' prefix if present
+        else
+          # Use commit hash for development builds
+          VERSION="0.1.0-${GITHUB_SHA::8}"
+        fi
+        
+        echo "CHART_VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Setting chart version to: $VERSION"
+        
+        # Update Chart.yaml with version
+        sed -i "s/^version:.*/version: $VERSION/" helm/archon/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/archon/Chart.yaml
+        
+        # Show updated Chart.yaml
+        echo "Updated Chart.yaml:"
+        cat helm/archon/Chart.yaml
+
+    - name: Package Helm chart
+      run: |
+        mkdir -p dist
+        helm package helm/archon --destination dist
+        echo "Packaged charts:"
+        ls -la dist/
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Push chart to OCI registry
+      run: |
+        CHART_FILE=$(ls dist/archon-*.tgz)
+        echo "Pushing chart: $CHART_FILE"
+        echo "Registry: oci://ghcr.io/${{ github.repository_owner }}/charts"
+        
+        # Convert repository owner to lowercase for OCI registry
+        REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        
+        helm push "$CHART_FILE" "oci://ghcr.io/${REPO_OWNER_LOWER}/charts"
+
+    - name: Generate chart index
+      run: |
+        # Create charts directory for GitHub Pages
+        mkdir -p charts
+        cp dist/*.tgz charts/
+        
+        # Generate index.yaml
+        helm repo index charts --url https://${{ github.repository_owner }}.github.io/Archon/charts
+        
+        # Create a simple index.html for the chart repository
+        cat > charts/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Archon Helm Charts</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                .container { max-width: 800px; margin: 0 auto; }
+                .chart-info { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                code { background: #e8e8e8; padding: 2px 4px; border-radius: 3px; }
+                pre { background: #f0f0f0; padding: 15px; border-radius: 5px; overflow-x: auto; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Archon Helm Charts</h1>
+                <p>This repository hosts Helm charts for Archon - MCP server for integrating web crawling and RAG into AI agents.</p>
+                
+                <div class="chart-info">
+                    <h2>Quick Start</h2>
+                    <p>Add this Helm repository:</p>
+                    <pre><code>helm repo add archon https://dapperdivers.github.io/Archon/charts
+        helm repo update</code></pre>
+                    
+                    <p>Install Archon:</p>
+                    <pre><code>helm install my-archon archon/archon</code></pre>
+                    
+                    <p>Or install with custom values:</p>
+                    <pre><code>helm install my-archon archon/archon -f values.yaml</code></pre>
+                </div>
+
+                <div class="chart-info">
+                    <h2>OCI Registry</h2>
+                    <p>You can also pull charts directly from the OCI registry:</p>
+                    <pre><code>helm install my-archon oci://ghcr.io/dapperdivers/charts/archon</code></pre>
+                </div>
+
+                <div class="chart-info">
+                    <h2>Configuration</h2>
+                    <p>See the <a href="https://github.com/dapperdivers/Archon/tree/main/helm/archon">chart documentation</a> for configuration options.</p>
+                    
+                    <h3>Required Configuration</h3>
+                    <p>Before installing, set your Supabase credentials:</p>
+                    <pre><code>secrets:
+          data:
+            supabaseUrl: "https://your-project.supabase.co"
+            supabaseServiceKey: "your-service-key"</code></pre>
+                </div>
+
+                <div class="chart-info">
+                    <h2>Available Charts</h2>
+                    <ul>
+                        <li><strong>archon</strong> - Complete Archon deployment with unified pod architecture</li>
+                    </ul>
+                    <p>See <a href="index.yaml">index.yaml</a> for chart metadata.</p>
+                </div>
+
+                <div class="chart-info">
+                    <h2>Source</h2>
+                    <p>Chart source: <a href="https://github.com/dapperdivers/Archon/tree/main/helm">GitHub</a></p>
+                    <p>Project: <a href="https://github.com/dapperdivers/Archon">Archon</a></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        EOF
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ./charts
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
+    - name: Install GitHub CLI
+      if: github.event_name == 'release'
+      run: |
+        type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt update
+        sudo apt install gh -y
+
+    - name: Create release artifacts
+      if: github.event_name == 'release'
+      run: |
+        # Create checksums
+        cd dist
+        sha256sum *.tgz > checksums.txt
+        
+        # Upload chart package to release
+        gh release upload ${{ github.event.release.tag_name }} *.tgz checksums.txt --clobber
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Output summary
+      run: |
+        echo "## 📦 Helm Chart Published" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Chart Version:** \`${{ env.CHART_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "**Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Installation Options" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**From Helm Repository:**" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo 'helm repo add archon https://dapperdivers.github.io/Archon/charts' >> $GITHUB_STEP_SUMMARY
+        echo 'helm install my-archon archon/archon' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**From OCI Registry:**" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "helm install my-archon oci://ghcr.io/${{ github.repository_owner }}/charts/archon --version ${{ env.CHART_VERSION }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Chart Repository" >> $GITHUB_STEP_SUMMARY
+        echo "🌐 [Browse charts](https://dapperdivers.github.io/Archon/charts)" >> $GITHUB_STEP_SUMMARY

@@ -132,10 +132,14 @@ uv sync                  # Install/update dependencies
 uv run pytest            # Run tests
 uv run python -m src.server.main  # Run server locally
 
-# With Docker
+# With Docker Compose (local development)
 docker-compose up --build -d       # Start all services
 docker-compose logs -f             # View logs
 docker-compose restart              # Restart services
+
+# With Kubernetes/Helm (production)
+helm install my-archon ./helm/archon -f my-values.yaml
+helm upgrade my-archon ./helm/archon -f my-values.yaml
 ```
 
 ### Testing
@@ -197,6 +201,31 @@ OPENAI_API_KEY=your-openai-key        # Can be set via UI
 LOGFIRE_TOKEN=your-logfire-token      # For observability
 LOG_LEVEL=INFO                         # DEBUG, INFO, WARNING, ERROR
 ```
+
+## Deployment Configuration
+
+Archon supports both Docker Compose and Kubernetes deployment modes:
+
+### Docker Compose (Default)
+```bash
+DEPLOYMENT_MODE=docker                 # Use Docker API for container management
+SERVICE_DISCOVERY_MODE=docker_compose  # Use container names for service discovery
+```
+
+### Kubernetes (with Helm + Sidecar)
+```bash
+# Deploy with Helm (recommended)
+helm install my-archon ./helm/archon -f my-values.yaml
+
+# Configuration is handled via Helm values.yaml:
+# - MCP_SIDECAR_URL=http://localhost:8053
+# - KUBERNETES_NAMESPACE=archon
+# - Automatic sidecar configuration
+```
+
+**Sidecar Pattern**: In Kubernetes environments, Archon uses a lightweight sidecar container to handle MCP pod lifecycle management. The main server automatically detects the sidecar and delegates Kubernetes operations to it. If no sidecar is available, it falls back to Docker mode for local development.
+
+**Helm Deployment**: Use the Helm chart in `helm/archon/` for production deployments. It provides templating, easy customization, and follows Kubernetes best practices.
 
 ## File Organization
 
