@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "archon.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "archon.labels" . | nindent 4 }}
+data:
+  # Core configuration
+  DEPLOYMENT_MODE: {{ .Values.config.deploymentMode | quote }}
+  SERVICE_DISCOVERY_MODE: {{ .Values.config.serviceDiscoveryMode | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  
+  # Service ports
+  ARCHON_SERVER_PORT: {{ .Values.service.server.port | quote }}
+  ARCHON_MCP_PORT: {{ .Values.service.mcp.port | quote }}
+  ARCHON_AGENTS_PORT: {{ .Values.service.agents.port | quote }}
+  ARCHON_UI_PORT: {{ .Values.service.ui.port | quote }}
+  {{- if .Values.config.sidecar.enabled }}
+  MCP_SIDECAR_PORT: {{ .Values.config.sidecar.port | quote }}
+  {{- end }}
+  
+  # Service hosts (using localhost - unified pod)
+  ARCHON_SERVER_HOST: localhost
+  ARCHON_MCP_HOST: localhost
+  ARCHON_AGENTS_HOST: localhost
+  ARCHON_UI_HOST: localhost
+  
+  # Kubernetes specific
+  KUBERNETES_NAMESPACE: {{ .Release.Namespace | quote }}
+  {{- if .Values.config.sidecar.enabled }}
+  MCP_SIDECAR_URL: "http://localhost:{{ .Values.config.sidecar.port }}"
+  {{- end }}
+  
+  # MCP Configuration
+  TRANSPORT: {{ .Values.config.transport | quote }}
+  
+  # Legacy service URLs for backward compatibility (using localhost)
+  API_SERVICE_URL: "http://localhost:{{ .Values.service.server.port }}"
+  AGENTS_SERVICE_URL: "http://localhost:{{ .Values.service.agents.port }}"

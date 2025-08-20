@@ -16,6 +16,7 @@ class Environment(Enum):
     """Deployment environment types"""
 
     DOCKER_COMPOSE = "docker_compose"
+    KUBERNETES = "kubernetes"
     LOCAL = "local"
 
 
@@ -24,6 +25,7 @@ class ServiceDiscovery:
     Service discovery that automatically adapts to the deployment environment.
 
     In Docker Compose: Uses container names
+    In Kubernetes: Uses service names with namespace
     In Local: Uses localhost with different ports
     """
 
@@ -47,6 +49,7 @@ class ServiceDiscovery:
             )
 
         self.environment = self._detect_environment()
+        self.namespace = os.getenv("KUBERNETES_NAMESPACE", "archon")
         self._cache: dict[str, str] = {}
 
     # Service name mappings
@@ -62,6 +65,20 @@ class ServiceDiscovery:
     @staticmethod
     def _detect_environment() -> Environment:
         """Detect the current deployment environment"""
+        # Check environment variable first (allows explicit override)
+        service_discovery_mode = os.getenv("SERVICE_DISCOVERY_MODE", "").lower()
+        deployment_mode = os.getenv("DEPLOYMENT_MODE", "").lower()
+        
+        if service_discovery_mode == "kubernetes" or deployment_mode == "kubernetes":
+            return Environment.KUBERNETES
+        elif service_discovery_mode == "docker_compose" or deployment_mode == "docker":
+            return Environment.DOCKER_COMPOSE
+        
+        # Auto-detect based on environment
+        # Check for Kubernetes environment
+        if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount"):
+            return Environment.KUBERNETES
+        
         # Check for Docker environment
         if os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER"):
             return Environment.DOCKER_COMPOSE
@@ -98,6 +115,20 @@ class ServiceDiscovery:
             env_var_name = f"{service_name.upper().replace('-', '_')}_HOST"
             host = os.getenv(env_var_name, service_name)
             url = f"{protocol}://{host}:{port}"
+
+        elif self.environment == Environment.KUBERNETES:
+            # Kubernetes uses service names with namespace (FQDN)
+            # Check for ARCHON host override first
+            env_var_name = f"{service_name.upper().replace('-', '_')}_HOST"
+            host = os.getenv(env_var_name)
+            
+            if host:
+                # Use override host if provided
+                url = f"{protocol}://{host}:{port}"
+            else:
+                # Use Kubernetes service FQDN: service.namespace.svc.cluster.local
+                host = f"{service_name}.{self.namespace}.svc.cluster.local"
+                url = f"{protocol}://{host}:{port}"
 
         else:
             # Local development - everything on localhost
@@ -170,6 +201,11 @@ class ServiceDiscovery:
     def is_docker(self) -> bool:
         """Check if running in Docker"""
         return self.environment == Environment.DOCKER_COMPOSE
+
+    @property
+    def is_kubernetes(self) -> bool:
+        """Check if running in Kubernetes"""
+        return self.environment == Environment.KUBERNETES
 
     @property
     def is_local(self) -> bool:

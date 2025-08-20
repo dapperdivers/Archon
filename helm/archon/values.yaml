@@ -1,0 +1,252 @@
+# Default values for archon.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration
+global:
+  # Container image registry
+  imageRegistry: "ghcr.io"
+  # Image pull secrets
+  imagePullSecrets: []
+
+# Application images
+image:
+  server:
+    repository: dapperdivers/archon-dev-server
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  mcp:
+    repository: dapperdivers/archon-dev-mcp
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  agents:
+    repository: dapperdivers/archon-dev-agents
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  ui:
+    repository: dapperdivers/archon-dev-frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+# Service configuration (unified service with multiple ports)
+service:
+  type: LoadBalancer  # UI needs external access
+  annotations: {}
+  server:
+    port: 8181
+  mcp:
+    port: 8051
+  agents:
+    port: 8052
+  ui:
+    port: 5173
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"  # Most common ingress controller
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/rate-limit: "100"
+  hosts:
+    - host: archon.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: archon  # Will use the unified service
+          port: ui         # Named port from unified service
+        - path: /api
+          pathType: Prefix
+          service: archon  # Will use the unified service
+          port: server     # Named port from unified service
+  tls: []
+  #  - secretName: archon-tls
+  #    hosts:
+  #      - archon.local
+
+# Resource configuration
+resources:
+  server:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  sidecar:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  mcp:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  agents:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  ui:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Replica count for unified deployment
+# Note: All services now run in a single pod
+replicaCount: 1  # Keep at 1 for stateful operations and simplicity
+
+# Autoscaling configuration
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Application configuration
+config:
+  # Deployment mode
+  deploymentMode: kubernetes
+  serviceDiscoveryMode: kubernetes
+  
+  # Logging
+  logLevel: INFO
+  
+  # MCP configuration
+  transport: sse
+  
+  # Sidecar configuration
+  sidecar:
+    enabled: true
+    port: 8053
+  
+  # MCP Configuration (simplified for unified deployment)
+  mcp:
+    # Basic MCP server settings
+    serverPort: 8051
+    logLevel: "INFO"
+
+# Secrets configuration
+secrets:
+  # Create secret from values (not recommended for production)
+  create: true
+  # Use existing secret
+  existingSecret: ""
+  # Secret data (only used if create: true)
+  data:
+    supabaseUrl: ""
+    supabaseServiceKey: ""
+    openaiApiKey: ""
+    logfireToken: ""
+
+# Service Account
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# RBAC configuration
+rbac:
+  # Create RBAC resources
+  create: true
+
+# Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false  # Some containers need write access
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# Health checks
+healthChecks:
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+
+# Node selection
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Persistence (for future use with persistent volumes)
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 8Gi
+
+# Monitoring (Prometheus integration)
+monitoring:
+  enabled: false  # Enable this if you have Prometheus Operator
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    # Endpoints for different services
+    endpoints:
+      - port: server
+        path: /metrics
+      - port: mcp
+        path: /metrics
+      - port: agents
+        path: /metrics
+
+# Network policies (for enhanced security)
+networkPolicy:
+  enabled: false  # Enable for production security
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from: []  # Allow all ingress by default
+  egress:
+    - to: []  # Allow all egress by default
