@@ -9,6 +9,13 @@ permissions:
   actions: read
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'python/**'
+      - 'archon-ui-main/**'
+      - '.github/workflows/build-images.yml'
   workflow_dispatch:
     inputs:
       archon_ref:
@@ -48,7 +55,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.archon_ref }}
+          ref: ${{ inputs.archon_ref || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -73,7 +80,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/archon-dev-${{ matrix.component.name }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ inputs.archon_ref }}
+            type=raw,value=${{ inputs.archon_ref || github.ref_name }}
             type=raw,value={{date 'YYYY-MM-DD'}}
             type=sha,prefix={{date 'YYYY-MM-DD'}}-
 
@@ -96,9 +103,9 @@ jobs:
             index:org.opencontainers.image.description=Archon ${{ matrix.component.name }} service - AI-powered development environment
             index:org.opencontainers.image.url=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            index:org.opencontainers.image.version=${{ inputs.archon_ref }}
+            index:org.opencontainers.image.version=${{ inputs.archon_ref || github.ref_name }}
             index:org.opencontainers.image.created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-            index:org.opencontainers.image.revision=${{ inputs.archon_ref }}
+            index:org.opencontainers.image.revision=${{ inputs.archon_ref || github.sha }}
             index:org.opencontainers.image.licenses=MIT
 
       - name: Generate artifact attestation
@@ -178,7 +185,7 @@ jobs:
         run: |
           echo "## 🐳 Archon Docker Images Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Target Ref:** \`${{ inputs.archon_ref }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Ref:** \`${{ inputs.archon_ref || github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build Status:** ${{ needs.build-images.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
