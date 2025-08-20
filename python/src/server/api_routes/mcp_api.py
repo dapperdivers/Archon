@@ -742,7 +742,7 @@ class MCPServerManager:
         status["deployment_mode"] = self._manager_type
         return status
 
-    def get_logs(self, limit: int = 100) -> list[dict[str, Any]]:
+    def get_logs(self, limit: int = 100, server_id: str | None = None) -> list[dict[str, Any]]:
         """Get historical logs."""
         if not self._initialized:
             return []
@@ -751,9 +751,21 @@ class MCPServerManager:
             return []
 
         if hasattr(self.manager, 'get_logs'):
-            return self.manager.get_logs(limit)
+            # Check if the manager supports server_id parameter (Kubernetes manager does)
+            import inspect
+            sig = inspect.signature(self.manager.get_logs)
+            if 'server_id' in sig.parameters:
+                return self.manager.get_logs(limit, server_id)
+            else:
+                # Fallback for managers that don't support server_id (Docker manager)
+                if server_id is not None:
+                    # External servers not supported in non-Kubernetes environments
+                    return []
+                return self.manager.get_logs(limit)
         # Fallback for managers without get_logs method
         if hasattr(self.manager, 'logs'):
+            if server_id is not None:
+                return []  # External servers not supported
             logs = list(self.manager.logs)
             if limit > 0:
                 logs = logs[-limit:]
@@ -889,7 +901,7 @@ async def get_status(_: None = Depends(try_mcp_initialization)):
 
 @router.get("/logs")
 async def get_logs(limit: int = 100, _: None = Depends(ensure_mcp_initialized)):
-    """Get MCP server logs."""
+    """Get MCP server logs (main Archon MCP server)."""
     with safe_span("api_mcp_logs") as span:
         safe_set_attribute(span, "endpoint", "/mcp/logs")
         safe_set_attribute(span, "method", "GET")
@@ -902,6 +914,35 @@ async def get_logs(limit: int = 100, _: None = Depends(ensure_mcp_initialized)):
             return {"logs": logs}
         except Exception as e:
             api_logger.error("MCP server logs API failed", error=str(e))
+            safe_set_attribute(span, "error", str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/servers/external/{server_id}/logs")
+async def get_external_server_logs(server_id: str, limit: int = 100, _: None = Depends(ensure_mcp_initialized)):
+    """Get logs from a specific external MCP server."""
+    with safe_span("api_external_mcp_logs") as span:
+        safe_set_attribute(span, "endpoint", f"/mcp/servers/external/{server_id}/logs")
+        safe_set_attribute(span, "method", "GET")
+        safe_set_attribute(span, "server_id", server_id)
+        safe_set_attribute(span, "limit", limit)
+
+        try:
+            # Only available in Kubernetes environments
+            if mcp_manager._manager_type != "kubernetes":
+                raise HTTPException(
+                    status_code=503,
+                    detail="External server logs only available in Kubernetes deployments"
+                )
+            
+            logs = mcp_manager.get_logs(limit, server_id)
+            api_logger.debug(f"External server logs retrieved - server_id={server_id}, count={len(logs)}")
+            safe_set_attribute(span, "log_count", len(logs))
+            return {"logs": logs, "server_id": server_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            api_logger.error(f"External server logs API failed - server_id={server_id}, error={str(e)}")
             safe_set_attribute(span, "error", str(e))
             raise HTTPException(status_code=500, detail=str(e)) from e
 

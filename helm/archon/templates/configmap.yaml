@@ -38,19 +38,6 @@ data:
   # MCP Configuration
   TRANSPORT: {{ .Values.config.transport | quote }}
   
-  # Crawler Configuration (if defined)
-  {{- if .Values.config.crawling }}
-  CRAWL_PAGE_TIMEOUT: {{ .Values.config.crawling.pageTimeout | quote }}
-  CRAWL_WAIT_STRATEGY: {{ .Values.config.crawling.waitStrategy | quote }}
-  CRAWL_DELAY_BEFORE_HTML: {{ .Values.config.crawling.delayBeforeHtml | quote }}
-  {{- if .Values.config.crawling.maxRetries }}
-  CRAWL_MAX_RETRIES: {{ .Values.config.crawling.maxRetries | quote }}
-  {{- end }}
-  {{- if .Values.config.crawling.retryDelay }}
-  CRAWL_RETRY_DELAY: {{ .Values.config.crawling.retryDelay | quote }}
-  {{- end }}
-  {{- end }}
-  
   # Service URLs for frontend API calls
   {{- if and .Values.ingress.enabled .Values.config.frontend.useIngressForApi }}
     {{- $ingressHost := (index .Values.ingress.hosts 0).host }}
