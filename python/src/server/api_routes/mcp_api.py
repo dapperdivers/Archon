@@ -15,20 +15,22 @@ import os
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, List, Protocol
+from typing import Any, Protocol
 
 import docker
 from docker.errors import APIError, NotFound
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+from ...shared.packages import get_package_manager
+
+# Import shared registry and package management components
+from ...shared.registry import get_mcp_registry
 
 # Import unified logging
 from ..config.logfire_config import api_logger, mcp_logger, safe_set_attribute, safe_span
-# Import shared registry and package management components
-from ...shared.registry import get_mcp_registry
-from ...shared.packages import get_package_manager
-from ..services.mcp_sidecar_client import MCPSidecarClient
 from ..services.kubernetes_mcp_manager import KubernetesMCPManager
+from ..services.mcp_sidecar_client import MCPSidecarClient
 from ..utils import get_supabase_client
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -68,15 +70,15 @@ class ExternalServerConfig(BaseModel):
 
 class ContainerManager(Protocol):
     """Protocol for container managers (Docker or Kubernetes)."""
-    
+
     async def start_server(self) -> dict[str, Any]:
         """Start the MCP server."""
         ...
-    
+
     async def stop_server(self) -> dict[str, Any]:
         """Stop the MCP server."""
         ...
-    
+
     def get_status(self) -> dict[str, Any]:
         """Get server status."""
         ...
@@ -120,14 +122,14 @@ class DockerManager:
         """Initialize Docker client and get container reference."""
         if self._docker_initialized:
             return self.docker_client is not None
-        
+
         # Check deployment mode first
         deployment_mode = os.getenv("DEPLOYMENT_MODE", "").lower()
         if deployment_mode == "kubernetes":
             mcp_logger.debug("Skipping Docker initialization in Kubernetes mode")
             self._docker_initialized = True
             return False
-        
+
         try:
             self.docker_client = docker.from_env()
             self.container = self._resolve_container()
@@ -148,7 +150,7 @@ class DockerManager:
         # Ensure Docker is initialized
         if not self._initialize_docker_client():
             return "docker_unavailable"
-        
+
         if not self.docker_client:
             return "docker_unavailable"
 
@@ -467,7 +469,7 @@ class DockerManager:
                     "uptime": None,
                     "logs_available": False
                 }
-        
+
         # Update status based on actual container state
         container_status = self._get_container_status()
 
@@ -525,7 +527,7 @@ class DockerManager:
     def _add_log(self, level: str, message: str):
         """Add a log entry and broadcast to connected WebSockets."""
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(datetime.timezone.utc).isoformat(),
             "level": level,
             "message": message,
         }
@@ -653,26 +655,26 @@ class DockerManager:
 
 class MCPServerManager:
     """Factory class that manages MCP server using appropriate backend (Docker or sidecar)."""
-    
+
     def __init__(self):
         self.log_websockets: list[WebSocket] = []
         self.sidecar_client = MCPSidecarClient()
         self.manager: ContainerManager | None = None
         self._manager_type = "unknown"
-        
+
         # Initialize manager asynchronously on first use
         self._initialization_lock = asyncio.Lock()
         self._initialized = False
-    
+
     async def _ensure_initialized(self):
         """Ensure the manager is initialized, preferring sidecar over Docker."""
         if self._initialized:
             return
-            
+
         async with self._initialization_lock:
             if self._initialized:
                 return
-                
+
             # Try sidecar first (for Kubernetes environments)
             if await self.sidecar_client.is_available():
                 self.manager = self.sidecar_client
@@ -691,9 +693,9 @@ class MCPServerManager:
                     self.manager = DockerManager()
                     self._manager_type = "docker"
                     mcp_logger.info("Using Docker backend for MCP management")
-            
+
             self._initialized = True
-    
+
     async def start_server(self) -> dict[str, Any]:
         """Start the MCP server using the configured backend."""
         await self._ensure_initialized()
@@ -704,7 +706,7 @@ class MCPServerManager:
                 "message": "MCP management not available in current deployment mode"
             }
         return await self.manager.start_server()
-    
+
     async def stop_server(self) -> dict[str, Any]:
         """Stop the MCP server using the configured backend."""
         await self._ensure_initialized()
@@ -715,33 +717,17 @@ class MCPServerManager:
                 "message": "MCP management not available in current deployment mode"
             }
         return await self.manager.stop_server()
-    
+
     def get_status(self) -> dict[str, Any]:
         """Get server status from the configured backend."""
-        # For synchronous access, we need to check if initialized
+        # Assume initialization is handled by async callers
         if not self._initialized:
-            # Try to initialize synchronously for status checks
-            try:
-                # Check if we're already in an event loop
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in an event loop, return partial status for now
-                    return {
-                        "status": "initializing", 
-                        "message": "Manager initializing",
-                        "deployment_mode": self._manager_type
-                    }
-                except RuntimeError:
-                    # No event loop running, safe to use asyncio.run
-                    asyncio.run(self._ensure_initialized())
-            except Exception as e:
-                mcp_logger.error(f"Failed to initialize manager for status check: {e}")
-                return {
-                    "status": "error",
-                    "message": "Manager initialization failed",
-                    "deployment_mode": "unknown"
-                }
-        
+            return {
+                "status": "initializing",
+                "message": "Manager not yet initialized",
+                "deployment_mode": self._manager_type
+            }
+
         if self.manager is None:
             return {
                 "status": "unavailable",
@@ -750,30 +736,20 @@ class MCPServerManager:
                 "uptime": None,
                 "logs_available": False
             }
-        
+
         status = self.manager.get_status()
         # Add deployment mode to status
         status["deployment_mode"] = self._manager_type
         return status
-    
+
     def get_logs(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get historical logs."""
         if not self._initialized:
-            try:
-                # Check if we're already in an event loop
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in an event loop, return empty logs for now
-                    return []
-                except RuntimeError:
-                    # No event loop running, safe to use asyncio.run
-                    asyncio.run(self._ensure_initialized())
-            except Exception:
-                return []
-        
+            return []
+
         if self.manager is None:
             return []
-        
+
         if hasattr(self.manager, 'get_logs'):
             return self.manager.get_logs(limit)
         # Fallback for managers without get_logs method
@@ -783,34 +759,24 @@ class MCPServerManager:
                 logs = logs[-limit:]
             return logs
         return []
-    
+
     def clear_logs(self):
         """Clear the log buffer."""
         if not self._initialized:
-            try:
-                # Check if we're already in an event loop
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in an event loop, skip clearing for now
-                    return
-                except RuntimeError:
-                    # No event loop running, safe to use asyncio.run
-                    asyncio.run(self._ensure_initialized())
-            except Exception:
-                return
-        
+            return
+
         if self.manager is None:
             return
-        
+
         if hasattr(self.manager, 'clear_logs'):
             self.manager.clear_logs()
-    
+
     async def add_websocket(self, websocket: WebSocket):
         """Add a WebSocket connection for log streaming."""
         await self._ensure_initialized()
         await websocket.accept()
         self.log_websockets.append(websocket)
-        
+
         if self.manager is None:
             # Send unavailable message
             await websocket.send_json({
@@ -818,7 +784,7 @@ class MCPServerManager:
                 "message": "MCP management not available in current deployment mode",
             })
             return
-        
+
         # Try to delegate to manager's websocket handling
         if hasattr(self.manager, 'add_websocket'):
             await self.manager.add_websocket(websocket)
@@ -828,12 +794,12 @@ class MCPServerManager:
                 "type": "connection",
                 "message": f"WebSocket connected for log streaming (using {self._manager_type})",
             })
-    
+
     def remove_websocket(self, websocket: WebSocket):
         """Remove a WebSocket connection."""
         if websocket in self.log_websockets:
             self.log_websockets.remove(websocket)
-        
+
         # Try to delegate to manager's websocket handling
         if self._initialized and hasattr(self.manager, 'remove_websocket'):
             self.manager.remove_websocket(websocket)
@@ -843,8 +809,27 @@ class MCPServerManager:
 mcp_manager = MCPServerManager()
 
 
+# FastAPI dependency to ensure MCP manager is initialized
+async def ensure_mcp_initialized():
+    """Dependency that ensures MCP manager is initialized before endpoint execution."""
+    await mcp_manager._ensure_initialized()
+
+
+# FastAPI dependency for status endpoints that should show initialization progress
+async def try_mcp_initialization():
+    """Dependency that attempts initialization but doesn't block if in progress."""
+    # For status endpoints, we want to show "initializing" if not ready yet
+    # So we don't await here, just trigger initialization if needed
+    if not mcp_manager._initialized:
+        # Start initialization as a background task without waiting
+        import asyncio
+        asyncio.create_task(mcp_manager._ensure_initialized())
+    # Always return, letting the endpoint decide what to show
+    return
+
+
 @router.post("/start", response_model=ServerResponse)
-async def start_server():
+async def start_server(_: None = Depends(ensure_mcp_initialized)):
     """Start the MCP server."""
     with safe_span("api_mcp_start") as span:
         safe_set_attribute(span, "endpoint", "/mcp/start")
@@ -861,11 +846,11 @@ async def start_server():
             api_logger.error("MCP server start API failed - error=%s", str(e))
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/stop", response_model=ServerResponse)
-async def stop_server():
+async def stop_server(_: None = Depends(ensure_mcp_initialized)):
     """Stop the MCP server."""
     with safe_span("api_mcp_stop") as span:
         safe_set_attribute(span, "endpoint", "/mcp/stop")
@@ -880,11 +865,11 @@ async def stop_server():
             api_logger.error(f"MCP server stop API failed - error={str(e)}")
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/status")
-async def get_status():
+async def get_status(_: None = Depends(try_mcp_initialization)):
     """Get MCP server status."""
     with safe_span("api_mcp_status") as span:
         safe_set_attribute(span, "endpoint", "/mcp/status")
@@ -899,11 +884,11 @@ async def get_status():
         except Exception as e:
             api_logger.error(f"MCP server status API failed - error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/logs")
-async def get_logs(limit: int = 100):
+async def get_logs(limit: int = 100, _: None = Depends(ensure_mcp_initialized)):
     """Get MCP server logs."""
     with safe_span("api_mcp_logs") as span:
         safe_set_attribute(span, "endpoint", "/mcp/logs")
@@ -918,11 +903,11 @@ async def get_logs(limit: int = 100):
         except Exception as e:
             api_logger.error("MCP server logs API failed", error=str(e))
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/logs")
-async def clear_logs():
+async def clear_logs(_: None = Depends(ensure_mcp_initialized)):
     """Clear MCP server logs."""
     with safe_span("api_mcp_clear_logs") as span:
         safe_set_attribute(span, "endpoint", "/mcp/logs")
@@ -937,7 +922,7 @@ async def clear_logs():
             api_logger.error("MCP server clear logs API failed", error=str(e))
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/config")
@@ -1000,7 +985,7 @@ async def get_mcp_config():
         except Exception as e:
             api_logger.error("Failed to get MCP configuration", error=str(e))
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail={"error": str(e)})
+            raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.post("/config")
@@ -1017,7 +1002,9 @@ async def save_configuration(config: ServerConfig):
             api_logger.info(
                 f"Saving MCP server configuration | transport={config.transport} | host={config.host} | port={config.port}"
             )
-            supabase_client = get_supabase_client()
+            supabase_client = get_supabase_client()  # Verify we can connect to Supabase
+            if not supabase_client:
+                raise Exception("Failed to connect to Supabase")
 
             config_json = config.model_dump_json()
 
@@ -1043,7 +1030,7 @@ async def save_configuration(config: ServerConfig):
         except Exception as e:
             api_logger.error(f"Failed to save MCP configuration | error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail={"error": str(e)})
+            raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.websocket("/logs/stream")
@@ -1062,14 +1049,14 @@ async def websocket_log_stream(websocket: WebSocket):
         mcp_manager.remove_websocket(websocket)
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass
 
 
 # External Server Management Endpoints
 
 @router.post("/servers/external/start")
-async def start_external_server(config: ExternalServerConfig):
+async def start_external_server(config: ExternalServerConfig, _: None = Depends(ensure_mcp_initialized)):
     """Start an external MCP server (npx, uv, etc.)."""
     with safe_span("api_start_external_mcp_server") as span:
         safe_set_attribute(span, "endpoint", "/mcp/servers/external/start")
@@ -1078,15 +1065,14 @@ async def start_external_server(config: ExternalServerConfig):
         safe_set_attribute(span, "transport", config.transport)
 
         try:
-            # Check if sidecar is available
-            await mcp_manager._ensure_initialized()
-            
+            # Manager is already initialized via dependency
+
             if mcp_manager._manager_type != "sidecar":
                 raise HTTPException(
                     status_code=503,
                     detail="External servers require Kubernetes sidecar deployment"
                 )
-            
+
             # Convert to sidecar format
             server_config_dict = {
                 "server_type": config.server_type,
@@ -1100,28 +1086,28 @@ async def start_external_server(config: ExternalServerConfig):
                 "port": config.port,
                 "timeout": config.timeout
             }
-            
+
             result = await mcp_manager.sidecar_client.start_external_server(server_config_dict)
-            
+
             api_logger.info(
                 f"External MCP server start API called - server_type={config.server_type}, success={result.get('success', False)}"
             )
             safe_set_attribute(span, "success", result.get("success", False))
             safe_set_attribute(span, "server_id", result.get("server_id"))
-            
+
             return result
-            
+
         except HTTPException:
             raise
         except Exception as e:
             api_logger.error(f"External MCP server start API failed - error={str(e)}")
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/servers/external/stop/{server_id}")
-async def stop_external_server(server_id: str):
+async def stop_external_server(server_id: str, _: None = Depends(ensure_mcp_initialized)):
     """Stop a specific external MCP server."""
     with safe_span("api_stop_external_mcp_server") as span:
         safe_set_attribute(span, "endpoint", "/mcp/servers/external/stop")
@@ -1129,44 +1115,42 @@ async def stop_external_server(server_id: str):
         safe_set_attribute(span, "server_id", server_id)
 
         try:
-            # Check if sidecar is available
-            await mcp_manager._ensure_initialized()
-            
+            # Manager is already initialized via dependency
+
             if mcp_manager._manager_type != "sidecar":
                 raise HTTPException(
                     status_code=503,
                     detail="External servers require Kubernetes sidecar deployment"
                 )
-            
+
             result = await mcp_manager.sidecar_client.stop_external_server(server_id)
-            
+
             api_logger.info(
                 f"External MCP server stop API called - server_id={server_id}, success={result.get('success', False)}"
             )
             safe_set_attribute(span, "success", result.get("success", False))
-            
+
             return result
-            
+
         except HTTPException:
             raise
         except Exception as e:
             api_logger.error(f"External MCP server stop API failed - error={str(e)}")
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/servers/external")
-async def list_external_servers():
+async def list_external_servers(_: None = Depends(ensure_mcp_initialized)):
     """List all running external MCP servers."""
     with safe_span("api_list_external_mcp_servers") as span:
         safe_set_attribute(span, "endpoint", "/mcp/servers/external")
         safe_set_attribute(span, "method", "GET")
 
         try:
-            # Check if sidecar is available
-            await mcp_manager._ensure_initialized()
-            
+            # Manager is already initialized via dependency
+
             if mcp_manager._manager_type != "sidecar":
                 return {
                     "servers": [],
@@ -1174,22 +1158,22 @@ async def list_external_servers():
                     "deployment_mode": mcp_manager._manager_type,
                     "message": "External servers require Kubernetes sidecar deployment"
                 }
-            
+
             result = await mcp_manager.sidecar_client.list_external_servers()
-            
+
             api_logger.debug(f"Listed external MCP servers - count={result.get('count', 0)}")
             safe_set_attribute(span, "server_count", result.get("count", 0))
-            
+
             return result
-            
+
         except Exception as e:
             api_logger.error(f"External MCP server list API failed - error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/servers/external/{server_id}")
-async def get_external_server_info(server_id: str):
+async def get_external_server_info(server_id: str, _: None = Depends(ensure_mcp_initialized)):
     """Get information about a specific external MCP server."""
     with safe_span("api_get_external_mcp_server_info") as span:
         safe_set_attribute(span, "endpoint", "/mcp/servers/external/{server_id}")
@@ -1197,30 +1181,29 @@ async def get_external_server_info(server_id: str):
         safe_set_attribute(span, "server_id", server_id)
 
         try:
-            # Check if sidecar is available
-            await mcp_manager._ensure_initialized()
-            
+            # Manager is already initialized via dependency
+
             if mcp_manager._manager_type != "sidecar":
                 raise HTTPException(
                     status_code=503,
                     detail="External servers require Kubernetes sidecar deployment"
                 )
-            
+
             result = await mcp_manager.sidecar_client.get_external_server_info(server_id)
-            
+
             if result is None:
                 raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-            
+
             api_logger.debug(f"Retrieved external MCP server info - server_id={server_id}")
-            
+
             return result
-            
+
         except HTTPException:
             raise
         except Exception as e:
             api_logger.error(f"External MCP server info API failed - error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Server-specific streaming endpoints
@@ -1229,50 +1212,50 @@ async def get_external_server_info(server_id: str):
 async def websocket_external_server_stream(websocket: WebSocket, server_id: str):
     """WebSocket endpoint for streaming from a specific external MCP server."""
     await websocket.accept()
-    
+
     try:
-        # Check if sidecar is available and server exists
+        # Ensure manager is initialized (WebSockets can't use Depends())
         await mcp_manager._ensure_initialized()
-        
+
         if mcp_manager._manager_type != "sidecar":
             await websocket.send_json({
                 "type": "error",
                 "message": "External servers require Kubernetes sidecar deployment"
             })
             return
-        
+
         # Get server info
         server_info = await mcp_manager.sidecar_client.get_external_server_info(server_id)
         if not server_info:
             await websocket.send_json({
-                "type": "error", 
+                "type": "error",
                 "message": f"Server {server_id} not found"
             })
             return
-        
+
         # Send connection info
         await websocket.send_json({
             "type": "connection",
             "message": f"Connected to {server_info.get('server_type', 'unknown')} server {server_id}",
             "server_info": server_info
         })
-        
+
         # Keep connection alive and handle any incoming messages
         while True:
             try:
                 await asyncio.sleep(1)
                 # Send periodic ping
-                await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
-                
+                await websocket.send_json({"type": "ping", "timestamp": datetime.now(datetime.timezone.utc).isoformat()})
+
                 # In a real implementation, you would:
                 # 1. Connect to the server's stdio/sse stream
                 # 2. Forward messages bidirectionally
                 # 3. Handle protocol conversion (stdio <-> websocket)
-                
+
             except Exception as e:
                 mcp_logger.error(f"Error in server stream {server_id}: {e}")
                 break
-                
+
     except WebSocketDisconnect:
         mcp_logger.info(f"WebSocket disconnected for server {server_id}")
     except Exception as e:
@@ -1282,17 +1265,17 @@ async def websocket_external_server_stream(websocket: WebSocket, server_id: str)
                 "type": "error",
                 "message": str(e)
             })
-        except:
+        except Exception:
             pass
     finally:
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass
 
 
 @router.post("/servers/external/{server_id}/execute")
-async def execute_tool_on_external_server(server_id: str, tool_request: dict):
+async def execute_tool_on_external_server(server_id: str, tool_request: dict, _: None = Depends(ensure_mcp_initialized)):
     """Execute a tool on a specific external MCP server."""
     with safe_span("api_execute_external_server_tool") as span:
         safe_set_attribute(span, "endpoint", "/mcp/servers/external/{server_id}/execute")
@@ -1301,26 +1284,25 @@ async def execute_tool_on_external_server(server_id: str, tool_request: dict):
         safe_set_attribute(span, "tool_name", tool_request.get("tool_name"))
 
         try:
-            # Check if sidecar is available
-            await mcp_manager._ensure_initialized()
-            
+            # Manager is already initialized via dependency
+
             if mcp_manager._manager_type != "sidecar":
                 raise HTTPException(
                     status_code=503,
                     detail="External servers require Kubernetes sidecar deployment"
                 )
-            
+
             # Validate server exists
             server_info = await mcp_manager.sidecar_client.get_external_server_info(server_id)
             if not server_info:
                 raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-            
+
             # For now, return a placeholder response
             # In a real implementation, you would:
             # 1. Connect to the server's communication channel
             # 2. Send the tool execution request
             # 3. Wait for and return the response
-            
+
             result = {
                 "success": True,
                 "server_id": server_id,
@@ -1328,21 +1310,21 @@ async def execute_tool_on_external_server(server_id: str, tool_request: dict):
                 "result": "Tool execution not yet implemented in sidecar",
                 "message": "This is a placeholder response. Full tool execution will be implemented in the next phase."
             }
-            
+
             api_logger.info(
                 f"Tool execution request for server {server_id} - tool={tool_request.get('tool_name')}"
             )
             safe_set_attribute(span, "success", True)
-            
+
             return result
-            
+
         except HTTPException:
             raise
         except Exception as e:
             api_logger.error(f"External server tool execution failed - error={str(e)}")
             safe_set_attribute(span, "success", False)
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Registry and Package Management Endpoints
@@ -1351,7 +1333,7 @@ async def execute_tool_on_external_server(server_id: str, tool_request: dict):
 async def get_mcp_server_templates(
     category: str = None,
     server_type: str = None,
-    tags: List[str] = None
+    tags: list[str] = None
 ):
     """Get available MCP server templates."""
     with safe_span("api_get_mcp_templates") as span:
@@ -1364,14 +1346,14 @@ async def get_mcp_server_templates(
 
         try:
             # Registry is already imported at the top
-            
+
             registry = get_mcp_registry()
             templates = registry.list_templates(
                 category=category,
                 server_type=server_type,
                 tags=tags
             )
-            
+
             # Convert to JSON-serializable format
             template_data = []
             for template in templates:
@@ -1397,20 +1379,20 @@ async def get_mcp_server_templates(
                     "license": template.license
                 }
                 template_data.append(template_dict)
-            
+
             api_logger.debug(f"Retrieved {len(template_data)} MCP server templates")
             safe_set_attribute(span, "template_count", len(template_data))
-            
+
             return {
                 "templates": template_data,
                 "count": len(template_data),
                 "categories": registry.get_categories()
             }
-            
+
         except Exception as e:
             api_logger.error(f"Failed to get MCP server templates - error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/registry/search")
@@ -1425,9 +1407,9 @@ async def search_mcp_packages(query: str, package_manager: str = "all", limit: i
 
         try:
             # Package manager is already imported at the top
-            
+
             package_mgr = get_package_manager()
-            
+
             if package_manager == "all":
                 results = await package_mgr.search_all_packages(query, limit)
             elif package_manager == "npm":
@@ -1438,11 +1420,11 @@ async def search_mcp_packages(query: str, package_manager: str = "all", limit: i
                 results = {"pypi": pypi_result}
             else:
                 raise HTTPException(status_code=400, detail="Invalid package manager")
-            
+
             # Convert to JSON-serializable format
             search_results = {}
             total_packages = 0
-            
+
             for pm_name, result in results.items():
                 packages_data = []
                 for pkg in result.packages:
@@ -1457,7 +1439,7 @@ async def search_mcp_packages(query: str, package_manager: str = "all", limit: i
                         "mcp_version": pkg.mcp_version
                     }
                     packages_data.append(pkg_dict)
-                
+
                 search_results[pm_name] = {
                     "packages": packages_data,
                     "count": result.total_count,
@@ -1465,22 +1447,22 @@ async def search_mcp_packages(query: str, package_manager: str = "all", limit: i
                     "source": result.source
                 }
                 total_packages += result.total_count
-            
+
             api_logger.debug(f"Package search completed - query={query}, total_packages={total_packages}")
             safe_set_attribute(span, "total_packages", total_packages)
-            
+
             return {
                 "query": query,
                 "results": search_results,
                 "total_packages": total_packages
             }
-            
+
         except HTTPException:
             raise
         except Exception as e:
             api_logger.error(f"Package search failed - error={str(e)}")
             safe_set_attribute(span, "error", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/tools")
