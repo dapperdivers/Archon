@@ -24,7 +24,10 @@ data:
   ARCHON_SERVER_HOST: localhost
   ARCHON_MCP_HOST: localhost
   ARCHON_AGENTS_HOST: localhost
-  ARCHON_UI_HOST: localhost
+  ARCHON_UI_HOST: 0.0.0.0
+  
+  # Vite configuration for ingress compatibility
+  VITE_ALLOWED_HOSTS: "localhost,{{ include "archon.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local{{- if .Values.ingress.enabled }}{{- range .Values.ingress.hosts }},{{ .host }}{{- end }}{{- end }}"
   
   # Kubernetes specific
   KUBERNETES_NAMESPACE: {{ .Release.Namespace | quote }}
