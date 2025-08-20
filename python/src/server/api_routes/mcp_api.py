@@ -722,7 +722,22 @@ class MCPServerManager:
         if not self._initialized:
             # Try to initialize synchronously for status checks
             try:
-                asyncio.run(self._ensure_initialized())
+                # Check if we're already in an event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an event loop, create a task
+                    import asyncio
+                    task = asyncio.create_task(self._ensure_initialized())
+                    # This is a non-blocking approach - if not initialized, return partial status
+                    if not self._initialized:
+                        return {
+                            "status": "initializing",
+                            "message": "Manager initializing",
+                            "deployment_mode": self._manager_type
+                        }
+                except RuntimeError:
+                    # No event loop running, safe to use asyncio.run
+                    asyncio.run(self._ensure_initialized())
             except Exception as e:
                 mcp_logger.error(f"Failed to initialize manager for status check: {e}")
                 return {
@@ -749,7 +764,14 @@ class MCPServerManager:
         """Get historical logs."""
         if not self._initialized:
             try:
-                asyncio.run(self._ensure_initialized())
+                # Check if we're already in an event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an event loop, return empty logs for now
+                    return []
+                except RuntimeError:
+                    # No event loop running, safe to use asyncio.run
+                    asyncio.run(self._ensure_initialized())
             except Exception:
                 return []
         
@@ -770,7 +792,14 @@ class MCPServerManager:
         """Clear the log buffer."""
         if not self._initialized:
             try:
-                asyncio.run(self._ensure_initialized())
+                # Check if we're already in an event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an event loop, skip clearing for now
+                    return
+                except RuntimeError:
+                    # No event loop running, safe to use asyncio.run
+                    asyncio.run(self._ensure_initialized())
             except Exception:
                 return
         
