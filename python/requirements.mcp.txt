@@ -6,3 +6,4 @@ python-dotenv>=1.0.0
 supabase==2.15.1
 logfire>=0.30.0
 fastapi>=0.104.0  # Required for mcp tools
+typing_extensions>=4.0.0  # Required for TypedDict import
