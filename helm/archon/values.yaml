@@ -50,7 +50,7 @@ ingress:
   enabled: false
   className: "nginx"  # Most common ingress controller
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    # nginx.ingress.kubernetes.io/rewrite-target: /  # Disabled to preserve API paths
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     # Socket.IO WebSocket support
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
