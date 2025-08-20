@@ -13,7 +13,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 
-from ...config.logfire_config import mcp_logger
+from ...config import mcp_logger
 from .exec_handler import KubernetesExecHandler
 
 

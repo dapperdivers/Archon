@@ -7,7 +7,7 @@ This module provides the STDIO protocol adapter for MCP communication.
 import asyncio
 import json
 
-from ...config.logfire_config import mcp_logger
+from ...config import mcp_logger
 from .adapters import MCPMessage, ProtocolAdapter, ProtocolType
 
 

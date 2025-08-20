@@ -7,7 +7,8 @@ Mirrors the functionality of the original manage_task tool but with individual t
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
+from typing_extensions import TypedDict
 from urllib.parse import urljoin
 
 import httpx

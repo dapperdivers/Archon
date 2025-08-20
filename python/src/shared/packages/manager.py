@@ -9,7 +9,8 @@ installation verification, and dependency management.
 import asyncio
 from typing import Any
 
-from ...config.logfire_config import mcp_logger
+import logging
+mcp_logger = logging.getLogger(__name__)
 from .models import PackageInfo, PackageSearchResult
 from .npm_client import NPMClient
 from .pypi_client import PyPIClient
