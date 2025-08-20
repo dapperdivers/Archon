@@ -16,7 +16,9 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   const isDocker = process.env.DOCKER_ENV === 'true' || existsSync('/.dockerenv');
   
   // For API proxy target - where should frontend proxy API calls?
-  const apiHost = isDocker ? 'archon-server' : 'localhost';  // Docker service name vs localhost
+  // In Kubernetes pods, containers communicate via localhost (same pod)
+  // In Docker Compose, use service names for inter-service communication
+  const apiHost = isDocker ? 'archon-server' : '127.0.0.1';
   const apiPort = process.env.ARCHON_SERVER_PORT || env.ARCHON_SERVER_PORT || '8181';
   
   // For Vite dev server - what host/port should Vite dev server bind to?

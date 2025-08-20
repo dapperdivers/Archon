@@ -71,6 +71,8 @@ class RecursiveCrawlStrategy:
                 max_concurrent = int(settings.get("CRAWL_MAX_CONCURRENT", "10"))
             memory_threshold = float(settings.get("MEMORY_THRESHOLD_PERCENT", "80"))
             check_interval = float(settings.get("DISPATCHER_CHECK_INTERVAL", "0.5"))
+            max_retries = int(settings.get("CRAWL_MAX_RETRIES", "2"))
+            retry_delay = float(settings.get("CRAWL_RETRY_DELAY", "5000")) / 1000.0  # Convert ms to seconds
         except (ValueError, KeyError, TypeError) as e:
             # Critical configuration errors should fail fast in alpha
             logger.error(f"Invalid crawl settings format: {e}", exc_info=True)
@@ -85,6 +87,8 @@ class RecursiveCrawlStrategy:
                 max_concurrent = 10  # Safe default to prevent memory issues
             memory_threshold = 80.0
             check_interval = 0.5
+            max_retries = 2
+            retry_delay = 5.0
             settings = {}  # Empty dict for defaults
 
         # Check if start URLs include documentation sites
@@ -178,28 +182,43 @@ class RecursiveCrawlStrategy:
                     url_mapping[transformed] = url
 
                 # Calculate progress for this batch within the depth
-                batch_progress = depth_start + int(
-                    (batch_idx / len(urls_to_crawl)) * (depth_end - depth_start)
-                )
-                await report_progress(
-                    batch_progress,
-                    f"Depth {depth + 1}: crawling URLs {batch_idx + 1}-{batch_end_idx} of {len(urls_to_crawl)}",
-                    totalPages=total_processed + batch_idx,
-                    processedPages=len(results_all),
-                )
-
-                # Use arun_many for native parallel crawling with streaming
-                logger.info(f"Starting parallel crawl of {len(batch_urls)} URLs with arun_many")
-                batch_results = await self.crawler.arun_many(
-                    urls=transformed_batch_urls, config=run_config, dispatcher=dispatcher
-                )
-
-                # Handle streaming results from arun_many
-                i = 0
-                async for result in batch_results:
+                batch_progress = depth_start + int((batch_idx / len(urls_to_crawl)) * (depth_end - depth_start))
+                await report_progress(batch_progress,
+                                    f'Depth {depth + 1}: crawling URLs {batch_idx + 1}-{batch_end_idx} of {len(urls_to_crawl)}',
+                                    totalPages=total_processed + batch_idx,
+                                    processedPages=len(results_all))
+                
+                # Use arun_many for native parallel crawling with streaming and retry logic
+                logger.info(f"Starting parallel crawl of {len(batch_urls)} URLs with arun_many (max_retries={max_retries})")
+                
+                # Track failed URLs for retry
+                failed_urls = []
+                retry_count = 0
+                all_batch_results = []
+                urls_to_try = transformed_batch_urls.copy()
+                
+                while retry_count <= max_retries and urls_to_try:
+                    if retry_count > 0:
+                        logger.info(f"Retry attempt {retry_count}/{max_retries} for {len(urls_to_try)} failed URLs")
+                        await asyncio.sleep(retry_delay)
+                    
+                    batch_results = await self.crawler.arun_many(urls=urls_to_try, config=run_config, dispatcher=dispatcher)
+                    
+                    # Process results and identify failures for potential retry
+                    current_failed = []
+                    async for result in batch_results:
+                        all_batch_results.append(result)
+                        if not result.success and retry_count < max_retries:
+                            current_failed.append(result.url)
+                    
+                    urls_to_try = current_failed
+                    retry_count += 1
+                
+                # Process all accumulated results
+                # Handle results from arun_many (now with retry logic)
+                for i, result in enumerate(all_batch_results):
                     # Map back to original URL using the mapping dict
                     original_url = url_mapping.get(result.url, result.url)
-
                     norm_url = normalize_url(original_url)
                     visited.add(norm_url)
                     total_processed += 1
@@ -230,17 +249,12 @@ class RecursiveCrawlStrategy:
                     # Report progress every few URLs
                     current_idx = batch_idx + i + 1
                     if current_idx % 5 == 0 or current_idx == len(urls_to_crawl):
-                        current_progress = depth_start + int(
-                            (current_idx / len(urls_to_crawl)) * (depth_end - depth_start)
-                        )
-                        await report_progress(
-                            current_progress,
-                            f"Depth {depth + 1}: processed {current_idx}/{len(urls_to_crawl)} URLs ({depth_successful} successful)",
-                            totalPages=total_processed,
-                            processedPages=len(results_all),
-                        )
-                    i += 1
-
+                        current_progress = depth_start + int((current_idx / len(urls_to_crawl)) * (depth_end - depth_start))
+                        await report_progress(current_progress,
+                                            f'Depth {depth + 1}: processed {current_idx}/{len(urls_to_crawl)} URLs ({depth_successful} successful)',
+                                            totalPages=total_processed,
+                                            processedPages=len(results_all))
+            
             current_urls = next_level_urls
 
             # Report completion of this depth

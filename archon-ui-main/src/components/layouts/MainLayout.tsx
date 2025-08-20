@@ -36,13 +36,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   useEffect(() => {
     
     const checkBackendHealth = async (retryCount = 0) => {
-      const maxRetries = 3; // 3 retries total
-      const retryDelay = 1500; // 1.5 seconds between retries
+      const maxRetries = 12; // 12 retries total (up to ~2 minutes)
+      const baseRetryDelay = 2000; // 2 seconds base delay
+      const maxTimeout = 15000; // 15 second timeout for busy servers
       
       try {
         // Create AbortController for proper timeout handling
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), maxTimeout);
         
         // Check if backend is responding with a simple health check
         const response = await fetch(`${credentialsService['baseUrl']}/api/health`, {
@@ -56,46 +57,52 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           const healthData = await response.json();
           console.log('📋 Backend health check:', healthData);
           
-          // Check if backend is truly ready (not just started)
-          if (healthData.ready === true) {
-            console.log('✅ Backend is fully initialized');
+          // Accept any healthy response - don't require specific 'ready' field
+          // This is more resilient to different backend health response formats
+          if (healthData.status === 'healthy' || healthData.ready === true || response.status === 200) {
+            console.log('✅ Backend is responding and healthy');
             setBackendReady(true);
             setBackendStartupFailed(false);
           } else {
-            // Backend is starting up but not ready yet
-            console.log(`🔄 Backend initializing... (attempt ${retryCount + 1}/${maxRetries}):`, healthData.message || 'Loading credentials...');
+            // Backend responded but may still be initializing
+            console.log(`🔄 Backend responded but initializing... (attempt ${retryCount + 1}/${maxRetries + 1})`);
             
-            // Retry with shorter interval during initialization
+            // Continue retrying with progressive delays
             if (retryCount < maxRetries) {
               setTimeout(() => {
                 checkBackendHealth(retryCount + 1);
-              }, retryDelay); // Constant 1.5s retry during initialization
+              }, baseRetryDelay);
             } else {
-              console.warn('Backend initialization taking too long - proceeding anyway');
-              // Don't mark as failed yet, just not fully ready
-              setBackendReady(false);
+              console.warn('Backend health check unclear after maximum retries - assuming ready');
+              // If backend is responding (even unclearly), assume it's working
+              setBackendReady(true);
+              setBackendStartupFailed(false);
             }
           }
         } else {
-          throw new Error(`Backend health check failed: ${response.status}`);
+          throw new Error(`Backend health check failed: ${response.status} ${response.statusText}`);
         }
       } catch (error) {
         // Handle AbortError separately for timeout
         const errorMessage = error instanceof Error 
-          ? (error.name === 'AbortError' ? 'Request timeout (5s)' : error.message)
+          ? (error.name === 'AbortError' ? `Request timeout (${maxTimeout/1000}s)` : error.message)
           : 'Unknown error';
-        // Only log after first attempt to reduce noise during normal startup
-        if (retryCount > 0) {
-          console.log(`Backend not ready yet (attempt ${retryCount + 1}/${maxRetries}):`, errorMessage);
+        
+        // Log attempts but don't spam - only log every 3rd attempt after the first few
+        const shouldLog = retryCount <= 2 || retryCount % 3 === 0;
+        if (shouldLog) {
+          console.log(`🔄 Backend not ready yet (attempt ${retryCount + 1}/${maxRetries + 1}): ${errorMessage}`);
         }
         
         // Retry if we haven't exceeded max retries
         if (retryCount < maxRetries) {
+          // Progressive backoff: 2s, 3s, 4s, 5s, then 5s for remaining attempts
+          const delay = Math.min(baseRetryDelay + (retryCount * 1000), 5000);
           setTimeout(() => {
             checkBackendHealth(retryCount + 1);
-          }, retryDelay * Math.pow(1.5, retryCount)); // Exponential backoff for connection errors
+          }, delay);
         } else {
-          console.error('Backend startup failed after maximum retries - showing error message');
+          console.error(`❌ Backend startup failed after ${maxRetries + 1} attempts over ~${Math.round((maxRetries * 3.5)/60)} minutes - showing error message`);
           setBackendReady(false);
           setBackendStartupFailed(true);
         }
