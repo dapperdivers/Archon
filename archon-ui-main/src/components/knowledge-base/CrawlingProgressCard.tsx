@@ -443,6 +443,12 @@ export const CrawlingProgressCard: React.FC<CrawlingProgressCardProps> = ({
           color: 'pink' as const,
           icon: <Square className="w-4 h-4" />
         };
+      case 'reconnecting':
+        return {
+          text: isUpload ? 'Reconnecting to upload...' : 'Reconnecting to crawl...',
+          color: 'blue' as const,
+          icon: <Clock className="w-4 h-4" />
+        };
       default:
         const activeStep = progressSteps.find(step => step.status === 'active');
         return {

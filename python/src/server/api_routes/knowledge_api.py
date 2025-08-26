@@ -18,30 +18,26 @@ from datetime import datetime
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from ..utils import get_supabase_client
-from ..services.storage import DocumentStorageService
-from ..services.search.rag_service import RAGService
-from ..services.knowledge import KnowledgeItemService, DatabaseMetricsService
+from ..config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
+from ..services.background_task_manager import get_task_manager
 from ..services.crawling import CrawlOrchestrationService
 from ..services.crawler_manager import get_crawler
-
-# Import unified logging
-from ..config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
-from ..services.crawler_manager import get_crawler
+from ..services.knowledge import DatabaseMetricsService, KnowledgeItemService
 from ..services.search.rag_service import RAGService
 from ..services.storage import DocumentStorageService
 from ..utils import get_supabase_client
 from ..utils.document_processing import extract_text_from_document
-
-# Get logger for this module
-logger = get_logger(__name__)
 from ..socketio_app import get_socketio_instance
+
 from .socketio_handlers import (
     complete_crawl_progress,
     error_crawl_progress,
     start_crawl_progress,
     update_crawl_progress,
 )
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 # Create router
 router = APIRouter(prefix="/api", tags=["knowledge"])
@@ -98,24 +94,69 @@ class RagQueryRequest(BaseModel):
 async def test_socket_progress(progress_id: str):
     """Test endpoint to verify Socket.IO crawl progress is working."""
     try:
-        # Send a test progress update
-        test_data = {
-            "progressId": progress_id,
-            "status": "testing",
-            "percentage": 50,
-            "message": "Test progress update from API",
-            "currentStep": "Testing Socket.IO connection",
-            "logs": ["Test log entry 1", "Test log entry 2"],
-        }
+        # Check if this progress_id is in active crawl tasks
+        from ..services.crawling import get_active_orchestration
+        
+        orchestration = get_active_orchestration(progress_id)
+        if orchestration:
+            # Active crawl found - return current status
+            current_status = orchestration.get_current_status() if hasattr(orchestration, 'get_current_status') else None
+            
+            test_data = {
+                "progressId": progress_id,
+                "status": current_status.get("status", "processing") if current_status else "processing",
+                "percentage": current_status.get("percentage", 0) if current_status else 0,
+                "message": "Crawl is active and running",
+                "currentStep": current_status.get("currentStep", "Processing") if current_status else "Processing",
+                "logs": ["Crawl verified as active"],
+                "active": True
+            }
+        else:
+            # No active crawl - check if in global active tasks
+            if progress_id in active_crawl_tasks:
+                task = active_crawl_tasks[progress_id]
+                if not task.done():
+                    test_data = {
+                        "progressId": progress_id,
+                        "status": "processing",
+                        "percentage": 0,
+                        "message": "Crawl task is active",
+                        "currentStep": "Processing",
+                        "logs": ["Background task verified as active"],
+                        "active": True
+                    }
+                else:
+                    test_data = {
+                        "progressId": progress_id,
+                        "status": "unknown",
+                        "percentage": 100,
+                        "message": "Crawl task completed or failed",
+                        "currentStep": "Finished",
+                        "logs": ["Task found but completed"],
+                        "active": False
+                    }
+            else:
+                # Not found in any active tracking
+                test_data = {
+                    "progressId": progress_id,
+                    "status": "unknown",
+                    "percentage": 0,
+                    "message": "No active crawl found for this progress ID",
+                    "currentStep": "Unknown",
+                    "logs": ["Progress ID not found in active tasks"],
+                    "active": False
+                }
 
+        # Send a verification ping via Socket.IO
         await update_crawl_progress(progress_id, test_data)
 
         return {
             "success": True,
-            "message": f"Test progress sent to room {progress_id}",
+            "message": f"Progress verification sent to room {progress_id}",
             "data": test_data,
         }
     except Exception as e:
+        safe_logfire_error(f"Failed to verify progress | progress_id={progress_id} | error={str(e)}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -513,11 +554,6 @@ async def upload_document(
 ):
     """Upload and process a document with progress tracking."""
     try:
-        # DETAILED LOGGING: Track knowledge_type parameter flow
-        safe_logfire_info(
-            f"📋 UPLOAD: Starting document upload | filename={file.filename} | content_type={file.content_type} | knowledge_type={knowledge_type}"
-        )
-        
         safe_logfire_info(
             f"Starting document upload | filename={file.filename} | content_type={file.content_type} | knowledge_type={knowledge_type}"
         )
@@ -886,8 +922,6 @@ async def knowledge_health():
 async def get_crawl_task_status(task_id: str):
     """Get status of a background crawl task."""
     try:
-        from ..services.background_task_manager import get_task_manager
-
         task_manager = get_task_manager()
         status = await task_manager.get_task_status(task_id)
 

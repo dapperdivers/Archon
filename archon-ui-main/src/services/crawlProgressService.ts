@@ -372,7 +372,7 @@ class CrawlProgressService {
   }
 
   /**
-   * Enhanced stream progress with additional callbacks
+   * Enhanced stream progress with additional callbacks and reconnection status
    */
   async streamProgressEnhanced(
     progressId: string,
@@ -380,6 +380,7 @@ class CrawlProgressService {
       onMessage: ProgressCallback;
       onStateChange?: (state: any) => void;
       onError?: (error: any) => void;
+      onReconnectionSuccess?: () => void;
     },
     options: StreamProgressOptions = {}
   ): Promise<void> {
@@ -387,14 +388,30 @@ class CrawlProgressService {
     try {
       await this.streamProgress(progressId, callbacks.onMessage, options);
       
-      // Add state change handler if provided
+      // Add state change handler if provided with reconnection success detection
       if (callbacks.onStateChange && this.wsService) {
-        this.wsService.addStateChangeHandler(callbacks.onStateChange);
+        const originalStateChangeHandler = callbacks.onStateChange;
+        const enhancedStateChangeHandler = (state: any) => {
+          originalStateChangeHandler(state);
+          
+          // Detect successful reconnection
+          if (state === 'CONNECTED' && callbacks.onReconnectionSuccess) {
+            console.log(`✅ Detected successful reconnection for ${progressId}`);
+            callbacks.onReconnectionSuccess();
+          }
+        };
+        this.wsService.addStateChangeHandler(enhancedStateChangeHandler);
       }
       
       // Add error handler if provided
       if (callbacks.onError && this.wsService) {
         this.wsService.addErrorHandler(callbacks.onError);
+      }
+      
+      // Signal successful initial connection
+      if (callbacks.onReconnectionSuccess && this.wsService.isConnected()) {
+        console.log(`✅ Initial connection successful for ${progressId}`);
+        callbacks.onReconnectionSuccess();
       }
     } catch (error) {
       if (callbacks.onError) {
@@ -402,6 +419,27 @@ class CrawlProgressService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Verify the current status of a crawl from the backend
+   */
+  async verifyCrawlStatus(progressId: string): Promise<{ status: string; percentage: number } | null> {
+    try {
+      // Use the test endpoint to verify if the crawl is still active
+      const response = await fetch(`/api/test-socket-progress/${progressId}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📊 Backend status for ${progressId}:`, data);
+        return {
+          status: data.data?.status || 'unknown',
+          percentage: data.data?.percentage || 0
+        };
+      }
+    } catch (error) {
+      console.warn(`Failed to verify crawl status for ${progressId}:`, error);
+    }
+    return null;
   }
 
   /**

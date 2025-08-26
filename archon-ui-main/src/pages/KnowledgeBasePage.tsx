@@ -166,7 +166,7 @@ export const KnowledgeBasePage = () => {
                     logs: [...(crawlData.logs || []), 'Reconnecting to crawl...']
                   }]);
                   
-                  // Reconnect to Socket.IO room
+                  // Reconnect to Socket.IO room with enhanced status handling
                   await crawlProgressService.streamProgressEnhanced(progressId, {
                     onMessage: (data: CrawlProgressData) => {
                       console.log('🔄 Reconnected crawl progress update:', data);
@@ -194,6 +194,25 @@ export const KnowledgeBasePage = () => {
                       } else {
                         handleProgressUpdate(data);
                       }
+                    },
+                    onReconnectionSuccess: async () => {
+                      console.log(`✅ Successfully reconnected to crawl ${progressId}`);
+                      
+                      // Verify current status from backend
+                      const backendStatus = await crawlProgressService.verifyCrawlStatus(progressId);
+                      
+                      // Update status to reflect successful reconnection
+                      setProgressItems(prev => prev.map(item => {
+                        if (item.progressId === progressId) {
+                          return {
+                            ...item,
+                            status: backendStatus?.status || item.status,
+                            percentage: backendStatus?.percentage || item.percentage,
+                            logs: [...(item.logs || []), '✅ Successfully reconnected to crawl progress']
+                          };
+                        }
+                        return item;
+                      }));
                     },
                     onError: (error: Error | Event) => {
                       const errorMessage = error instanceof Error ? error.message : 'Connection error';
@@ -481,6 +500,25 @@ export const KnowledgeBasePage = () => {
             } else {
               handleProgressUpdate(data);
             }
+          },
+          onReconnectionSuccess: async () => {
+            console.log(`✅ Successfully reconnected to refresh ${response.progressId}`);
+            
+            // Verify current status from backend
+            const backendStatus = await crawlProgressService.verifyCrawlStatus(response.progressId);
+            
+            // Update status to reflect successful reconnection
+            setProgressItems(prev => prev.map(item => {
+              if (item.progressId === response.progressId) {
+                return {
+                  ...item,
+                  status: backendStatus?.status || item.status,
+                  percentage: backendStatus?.percentage || item.percentage,
+                  logs: [...(item.logs || []), '✅ Successfully reconnected to refresh progress']
+                };
+              }
+              return item;
+            }));
           },
           onStateChange: (state: any) => {
             console.log('🔄 Refresh state change:', state);
@@ -866,6 +904,25 @@ export const KnowledgeBasePage = () => {
       // Use the enhanced streamProgress method with all callbacks
       await crawlProgressService.streamProgressEnhanced(progressId, {
         onMessage: progressCallback,
+        onReconnectionSuccess: async () => {
+          console.log(`✅ Successfully reconnected to crawl ${progressId}`);
+          
+          // Verify current status from backend
+          const backendStatus = await crawlProgressService.verifyCrawlStatus(progressId);
+          
+          // Update status to reflect successful reconnection
+          setProgressItems(prev => prev.map(item => {
+            if (item.progressId === progressId) {
+              return {
+                ...item,
+                status: backendStatus?.status || item.status,
+                percentage: backendStatus?.percentage || item.percentage,
+                logs: [...(item.logs || []), '✅ Successfully reconnected to crawl progress']
+              };
+            }
+            return item;
+          }));
+        },
         onStateChange: stateChangeCallback,
         onError: errorCallback
       }, {
